@@ -9,9 +9,12 @@ export interface ImportSource {
      *
      * The previous self-hosted install (`just-share-please-selfhosted`) is this same plugin
      * under its old id, used by the same person against the same server, so its token is the
-     * one the user would have to re-enter anyway. It is only taken when no token is set yet.
+     * one the user would have to re-enter anyway. It is only taken when no token is set yet
+     * and the resulting url is that same source's url, so the token is never sent to a server
+     * it was not configured for.
      * The original upstream plugin (`just-share-please`) has no upload token concept and is a
-     * different plugin, so token and language are never taken from it.
+     * different plugin, so token and language are never taken from it, and its url is only
+     * taken while no token is set (otherwise an existing token would go to its server).
      */
     trusted: boolean;
 }
@@ -49,9 +52,11 @@ function isSharedItem(value: unknown): value is SharedItem {
 /**
  * Merges an earlier plugin's data into this plugin's settings without mutating either.
  * Shares are merged and deduplicated by id (existing entries win). The url is only taken
- * when none is configured yet, and never the original public server. Token and language
- * are only taken from a trusted source, and only when the token is empty / the language
- * is still "auto".
+ * when none is configured yet, never the original public server, and from an untrusted
+ * source only while no token is set. Token and language are only taken from a trusted
+ * source, and only when the token is empty / the language is still "auto". The token is
+ * additionally only taken when the url after merging equals this source's url, so url and
+ * token always come as a pair from the same file.
  */
 export function mergeImported(current: LappuSettings, imported: unknown, options: MergeOptions = {}): ImportResult {
     let settings: LappuSettings = {...current, shared: [...current.shared]};
@@ -59,11 +64,14 @@ export function mergeImported(current: LappuSettings, imported: unknown, options
         return {settings, added: 0};
     let data = imported as Record<string, unknown>;
 
-    if (!settings.url.trim() && typeof data.url === "string" && data.url.trim() && !ORIGINAL_PUBLIC_URL.test(data.url.trim()))
-        settings.url = data.url.trim();
+    let url = typeof data.url === "string" ? data.url.trim() : "";
+    let usableUrl = url !== "" && !ORIGINAL_PUBLIC_URL.test(url);
+    if (!settings.url.trim() && usableUrl && (options.trusted || !settings.token.trim()))
+        settings.url = url;
 
     if (options.trusted) {
-        if (!settings.token.trim() && typeof data.token === "string" && data.token.trim())
+        if (!settings.token.trim() && usableUrl && settings.url.trim() === url
+            && typeof data.token === "string" && data.token.trim())
             settings.token = data.token.trim();
         if (settings.language === "auto" && (data.language === "fi" || data.language === "en"))
             settings.language = data.language;

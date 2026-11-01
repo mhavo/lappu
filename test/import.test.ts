@@ -83,7 +83,8 @@ describe("mergeImported", () => {
     });
 
     it("takes the token and language from a trusted source when none are set", () => {
-        let result = mergeImported(settings(), {token: "old-token", language: "fi"}, {trusted: true});
+        let result = mergeImported(settings(), {url: "https://previous.example.com", token: "old-token", language: "fi"}, {trusted: true});
+        expect(result.settings.url).toBe("https://previous.example.com");
         expect(result.settings.token).toBe("old-token");
         expect(result.settings.language).toBe("fi");
     });
@@ -98,6 +99,41 @@ describe("mergeImported", () => {
         let result = mergeImported(settings(), {token: 42, language: "xx"} as never, {trusted: true});
         expect(result.settings.token).toBe("");
         expect(result.settings.language).toBe("auto");
+    });
+
+    it("takes a trusted token when the configured url already equals the source url", () => {
+        let result = mergeImported(settings({url: "https://previous.example.com"}), {url: " https://previous.example.com ", token: "old"}, {trusted: true});
+        expect(result.settings.token).toBe("old");
+    });
+
+    it("does not take a trusted token without a url from the same source", () => {
+        let result = mergeImported(settings(), {token: "old"}, {trusted: true});
+        expect(result.settings.token).toBe("");
+    });
+
+    it("does not pair a trusted token with a url configured elsewhere", () => {
+        let result = mergeImported(settings({url: "https://manual.example.com"}), {token: "old"}, {trusted: true});
+        expect(result.settings.url).toBe("https://manual.example.com");
+        expect(result.settings.token).toBe("");
+
+        result = mergeImported(settings({url: "https://manual.example.com"}), {url: "https://previous.example.com", token: "old"}, {trusted: true});
+        expect(result.settings.url).toBe("https://manual.example.com");
+        expect(result.settings.token).toBe("");
+    });
+
+    it("does not take a trusted token when the source url is the rejected public server", () => {
+        let result = mergeImported(settings(), {url: "https://jsp.ellpeck.de", token: "old"}, {trusted: true});
+        expect(result.settings.url).toBe("");
+        expect(result.settings.token).toBe("");
+    });
+
+    it("does not let an untrusted source set the url while a token is configured", () => {
+        let result = mergeImported(settings({token: "secret"}), {url: "https://evil.example.com"});
+        expect(result.settings.url).toBe("");
+        expect(result.settings.token).toBe("secret");
+
+        result = mergeImported(settings({token: "  "}), {url: "https://original.example.com"});
+        expect(result.settings.url).toBe("https://original.example.com");
     });
 
     it("still rejects the original public server url from a trusted source", () => {
@@ -123,6 +159,18 @@ describe("IMPORT_SOURCES", () => {
             current = mergeImported(current, data, {trusted: source.trusted}).settings;
         expect(current.url).toBe("https://previous.example.com");
         expect(current.token).toBe("t");
+        expect(current.shared.map(s => s.id)).toEqual(["a1", "b2"]);
+    });
+
+    it("never pairs a url-less trusted token with the untrusted source's url", () => {
+        let current = settings();
+        for (let [source, data] of [
+            [IMPORT_SOURCES[0], {token: "t", shared: [{id: "a1", password: "p", path: "A.md"}]}],
+            [IMPORT_SOURCES[1], {url: "https://original.example.com", shared: [{id: "b2", password: "p", path: "B.md"}]}]
+        ] as const)
+            current = mergeImported(current, data, {trusted: source.trusted}).settings;
+        expect(current.token).toBe("");
+        expect(current.url).toBe("https://original.example.com");
         expect(current.shared.map(s => s.id)).toEqual(["a1", "b2"]);
     });
 });

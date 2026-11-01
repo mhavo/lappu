@@ -68,7 +68,7 @@ The server listens on `127.0.0.1:8080`. Put a reverse proxy with TLS (for exampl
 | `LAPPU_MAX_BODY_BYTES` | `20971520` (20 MiB) | Maximum request body size. Images are embedded as base64, so the limit is generous. |
 | `LAPPU_TRUSTED_PROXIES` | `127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7` | Comma-separated CIDRs or IPs whose `X-Forwarded-For` header is trusted for the client IP (rate limiting and logs). |
 
-The server refuses to start if no token is set and `LAPPU_ALLOW_ANONYMOUS_UPLOADS` is not `true`, or if the token is shorter than 32 characters.
+The server refuses to start if no token is set and `LAPPU_ALLOW_ANONYMOUS_UPLOADS` is not `true`, if the token is shorter than 32 characters, or if any old `JSP_*` variable (the pre-rename names) is still set.
 
 If you deploy behind a reverse proxy on the same host, the proxy usually reaches the container through the published port, so the container only sees the Docker gateway address. The default `LAPPU_TRUSTED_PROXIES` covers private and Docker networks for that reason. Narrow it if untrusted clients can reach the port directly.
 
@@ -104,7 +104,7 @@ Lappu is the same plugin under a new id, so Obsidian treats it as a separate plu
 2. Lappu offers to import the old plugin's data on first start. Otherwise use the *Import shares from Just Share Please* button in the Lappu settings. Your shares, server URL, token and language come along.
 3. Check that the Lappu view lists your shares, then disable and remove *Just Share Please (Self-hosted)*.
 
-If you run the server, rename its environment variables from `JSP_*` to `LAPPU_*` (same suffixes).
+If you run the server, rename its environment variables from `JSP_*` to `LAPPU_*` (same suffixes). The server refuses to start while any of the old `JSP_*` variables is still set, and names each one it found.
 
 ## Importing from earlier plugins
 

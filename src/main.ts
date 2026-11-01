@@ -221,6 +221,8 @@ export default class LappuPlugin extends Plugin {
     /**
      * Imports url, shares and options from earlier plugins' data.json files, previous
      * self-hosted install first so its url and token win over the original plugin's.
+     * mergeImported only takes a token together with the same source's url, and an
+     * untrusted url only while no token is set, so a token never pairs with a foreign url.
      */
     async importFromPreviousPlugins(): Promise<boolean> {
         try {

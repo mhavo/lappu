@@ -23,7 +23,32 @@ type config struct {
 	TrustedProxies []netip.Prefix
 }
 
+// envSuffixes are the configuration variables; each is read as LAPPU_<suffix>.
+// Before the rename to Lappu they were JSP_<suffix>.
+var envSuffixes = []string{
+	"LISTEN", "DATA_DIR", "QUOTES_FILE", "ALLOW_ANONYMOUS_UPLOADS",
+	"UPLOAD_TOKEN", "UPLOAD_TOKEN_FILE", "MAX_BODY_BYTES", "TRUSTED_PROXIES",
+}
+
+// checkOldVariables fails if any pre-rename JSP_* variable is set, so a renamed
+// deployment does not silently fall back to defaults (e.g. a different data dir).
+func checkOldVariables(getenv func(string) string) error {
+	var msgs []string
+	for _, suffix := range envSuffixes {
+		if strings.TrimSpace(getenv("JSP_"+suffix)) != "" {
+			msgs = append(msgs, fmt.Sprintf("JSP_%s is no longer read; rename it to LAPPU_%s", suffix, suffix))
+		}
+	}
+	if len(msgs) > 0 {
+		return errors.New(strings.Join(msgs, "; "))
+	}
+	return nil
+}
+
 func loadConfig(getenv func(string) string) (config, error) {
+	if err := checkOldVariables(getenv); err != nil {
+		return config{}, err
+	}
 	get := func(key, def string) string {
 		if v := strings.TrimSpace(getenv(key)); v != "" {
 			return v

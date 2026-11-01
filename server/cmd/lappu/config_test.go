@@ -95,3 +95,25 @@ func TestConfigAnonymousWithoutToken(t *testing.T) {
 		t.Errorf("%+v %v", c, err)
 	}
 }
+
+func TestConfigRejectsOldJSPVariables(t *testing.T) {
+	for _, suffix := range []string{"LISTEN", "DATA_DIR", "QUOTES_FILE", "ALLOW_ANONYMOUS_UPLOADS",
+		"UPLOAD_TOKEN", "UPLOAD_TOKEN_FILE", "MAX_BODY_BYTES", "TRUSTED_PROXIES"} {
+		_, err := loadConfig(envFrom(map[string]string{"LAPPU_UPLOAD_TOKEN": token, "JSP_" + suffix: "x"}))
+		want := "JSP_" + suffix + " is no longer read; rename it to LAPPU_" + suffix
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("JSP_%s: err %v, want %q", suffix, err, want)
+		}
+	}
+
+	// Reported before other validation, and all offending names are listed.
+	_, err := loadConfig(envFrom(map[string]string{"JSP_LISTEN": ":80", "JSP_UPLOAD_TOKEN": "short"}))
+	if err == nil || !strings.Contains(err.Error(), "JSP_LISTEN") || !strings.Contains(err.Error(), "JSP_UPLOAD_TOKEN") {
+		t.Errorf("err %v", err)
+	}
+
+	// Empty (or whitespace-only) old variables are ignored.
+	if _, err := loadConfig(envFrom(map[string]string{"LAPPU_UPLOAD_TOKEN": token, "JSP_LISTEN": " "})); err != nil {
+		t.Errorf("empty JSP_LISTEN: %v", err)
+	}
+}

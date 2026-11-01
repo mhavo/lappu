@@ -1,4 +1,4 @@
-package jsp
+package lappu
 
 import (
 	"io/fs"

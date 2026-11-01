@@ -13,7 +13,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/mhavo/ObsidianJustSharePlease/server/internal/store"
+	"github.com/mhavo/lappu/server/internal/store"
 )
 
 const testToken = "0123456789abcdef0123456789abcdef"

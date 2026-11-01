@@ -1,26 +1,26 @@
 import {App, PluginSettingTab, SettingGroup} from "obsidian";
-import JustSharePleasePlugin from "./main";
+import LappuPlugin from "./main";
 import {LanguageSetting} from "./i18n";
 
-export class JSPSettingsTab extends PluginSettingTab {
+export class LappuSettingsTab extends PluginSettingTab {
 
-    plugin: JustSharePleasePlugin;
+    plugin: LappuPlugin;
 
-    constructor(app: App, plugin: JustSharePleasePlugin) {
+    constructor(app: App, plugin: LappuPlugin) {
         super(app, plugin);
         this.plugin = plugin;
         this.icon = "share";
     }
 
     display(): void {
-        let t = this.plugin.t.bind(this.plugin) as JustSharePleasePlugin["t"];
+        let t = this.plugin.t.bind(this.plugin) as LappuPlugin["t"];
         this.containerEl.empty();
         let group = new SettingGroup(this.containerEl);
         group.addSetting(s => s
             .setName(t("settings.url.name"))
             .setDesc(t("settings.url.desc"))
             .addText(text => {
-                text.setPlaceholder("https://jsp.example.com");
+                text.setPlaceholder("https://lappu.example.com");
                 text.setValue(this.plugin.settings.url);
                 text.onChange(async v => {
                     this.plugin.settings.url = v.trim();
@@ -100,7 +100,7 @@ export class JSPSettingsTab extends PluginSettingTab {
             .addButton(b => b
                 .setButtonText(t("import.button"))
                 .onClick(async () => {
-                    if (await this.plugin.importFromOriginal())
+                    if (await this.plugin.importFromPreviousPlugins())
                         this.display();
                 })));
     }

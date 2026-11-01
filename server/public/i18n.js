@@ -1,5 +1,5 @@
 // UI translations for the viewer. One table per language; to add a language,
-// add a table with the same keys. Works in the browser (globalThis.JspI18n)
+// add a table with the same keys. Works in the browser (globalThis.LappuI18n)
 // and in Node (module.exports) for tests.
 (function (root) {
     "use strict";
@@ -59,5 +59,5 @@
     if (typeof module === "object" && module.exports)
         module.exports = api;
     else
-        root.JspI18n = api;
+        root.LappuI18n = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

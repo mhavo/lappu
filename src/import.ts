@@ -1,8 +1,31 @@
-// Merging data from the original "just-share-please" plugin. Must not import "obsidian".
-import {JSPSettings, SharedItem} from "./settings";
+// Merging data from earlier plugins (see IMPORT_SOURCES). Must not import "obsidian".
+import {LappuSettings, SharedItem} from "./settings";
 
-/** Plugin id of the original plugin whose data.json can be imported. */
-export const ORIGINAL_PLUGIN_ID = "just-share-please";
+export interface ImportSource {
+    /** Plugin id; its data is read from `<configDir>/plugins/<id>/data.json`. */
+    id: string;
+    /**
+     * Whether the token and language may be taken from this source.
+     *
+     * The previous self-hosted install (`just-share-please-selfhosted`) is this same plugin
+     * under its old id, used by the same person against the same server, so its token is the
+     * one the user would have to re-enter anyway. It is only taken when no token is set yet.
+     * The original upstream plugin (`just-share-please`) has no upload token concept and is a
+     * different plugin, so token and language are never taken from it.
+     */
+    trusted: boolean;
+}
+
+/** Plugins whose data.json can be imported, in merge order: the previous self-hosted id first. */
+export const IMPORT_SOURCES: readonly ImportSource[] = [
+    {id: "just-share-please-selfhosted", trusted: true},
+    {id: "just-share-please", trusted: false}
+];
+
+export interface MergeOptions {
+    /** Also take token and language (only when not yet set). See ImportSource.trusted. */
+    trusted?: boolean;
+}
 
 /** The original plugin's public server; shares there can't be managed by a self-hosted server. */
 const ORIGINAL_PUBLIC_URL = /^https?:\/\/jsp\.ellpeck\.de\/?$/i;
@@ -10,7 +33,7 @@ const ORIGINAL_PUBLIC_URL = /^https?:\/\/jsp\.ellpeck\.de\/?$/i;
 const BOOLEAN_KEYS = ["stripFrontmatter", "includeNoteName", "unshareDeletedFiles", "autoUpdateShares"] as const;
 
 export interface ImportResult {
-    settings: JSPSettings;
+    settings: LappuSettings;
     /** Number of shares that were not present before. */
     added: number;
 }
@@ -24,18 +47,27 @@ function isSharedItem(value: unknown): value is SharedItem {
 }
 
 /**
- * Merges the original plugin's data into this plugin's settings without mutating either.
+ * Merges an earlier plugin's data into this plugin's settings without mutating either.
  * Shares are merged and deduplicated by id (existing entries win). The url is only taken
- * when none is configured yet. Token and language are never touched.
+ * when none is configured yet, and never the original public server. Token and language
+ * are only taken from a trusted source, and only when the token is empty / the language
+ * is still "auto".
  */
-export function mergeImported(current: JSPSettings, imported: unknown): ImportResult {
-    let settings: JSPSettings = {...current, shared: [...current.shared]};
+export function mergeImported(current: LappuSettings, imported: unknown, options: MergeOptions = {}): ImportResult {
+    let settings: LappuSettings = {...current, shared: [...current.shared]};
     if (!imported || typeof imported !== "object")
         return {settings, added: 0};
     let data = imported as Record<string, unknown>;
 
     if (!settings.url.trim() && typeof data.url === "string" && data.url.trim() && !ORIGINAL_PUBLIC_URL.test(data.url.trim()))
         settings.url = data.url.trim();
+
+    if (options.trusted) {
+        if (!settings.token.trim() && typeof data.token === "string" && data.token.trim())
+            settings.token = data.token.trim();
+        if (settings.language === "auto" && (data.language === "fi" || data.language === "en"))
+            settings.language = data.language;
+    }
 
     for (let key of BOOLEAN_KEYS) {
         if (typeof data[key] === "boolean")

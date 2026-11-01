@@ -4,25 +4,25 @@ export type Language = "fi" | "en";
 export type LanguageSetting = "auto" | Language;
 
 const en = {
-    "command.openView": "Open Just Share Please view",
-    "command.share": "Share current file to JSP",
-    "command.copy": "Copy current file's JSP link",
-    "command.update": "Update current file in JSP",
-    "command.delete": "Delete current file from JSP",
+    "command.openView": "Open Lappu view",
+    "command.share": "Share current file as Lappu",
+    "command.copy": "Copy current file's Lappu link",
+    "command.update": "Update current file's Lappu",
+    "command.delete": "Delete current file's Lappu",
     "command.import": "Import shares from Just Share Please",
 
-    "action.share": "Share to JSP",
-    "action.copy": "Copy JSP link",
-    "action.update": "Update in JSP",
-    "action.delete": "Delete from JSP",
+    "action.share": "Share as Lappu",
+    "action.copy": "Copy Lappu link",
+    "action.update": "Update Lappu",
+    "action.delete": "Delete Lappu",
     "action.open": "Open in Obsidian",
 
     "notice.shared": "Successfully shared {name} and copied link to clipboard",
-    "notice.updated": "Successfully updated {name} on JSP",
-    "notice.deleted": "Successfully deleted {name} from JSP",
+    "notice.updated": "Successfully updated the Lappu for {name}",
+    "notice.deleted": "Successfully deleted the Lappu for {name}",
     "notice.localDeleted": "Successfully deleted local information for {name}",
     "notice.linkCopied": "Copied link to {name} to clipboard",
-    "notice.notConfigured": "Set the server URL and token in the Just Share Please (Self-hosted) settings first.",
+    "notice.notConfigured": "Set the server URL and token in the Lappu settings first.",
 
     "button.openSettings": "Open settings",
     "button.forceDeleteLocal": "Force-delete local information",
@@ -38,14 +38,14 @@ const en = {
     "error.rateLimited": "Too many failed attempts. Try again later.",
     "error.other": "The server responded with status {status}.",
 
-    "import.offer": "Shares from the original Just Share Please plugin were found.",
+    "import.offer": "Shares from an earlier Just Share Please plugin were found.",
     "import.button": "Import shares from Just Share Please",
     "import.done": "Imported settings and {count} new shares from Just Share Please.",
     "import.notFound": "No Just Share Please data was found in this vault.",
     "import.failed": "Importing from Just Share Please failed: {error}",
 
     "settings.url.name": "Server URL",
-    "settings.url.desc": "Address of your self-hosted Just Share Please server, for example https://jsp.example.com.",
+    "settings.url.desc": "Address of your self-hosted Lappu server, for example https://lappu.example.com.",
     "settings.token.name": "Token",
     "settings.token.desc": "Upload token configured on the server. It is sent when sharing, updating and deleting.",
     "settings.includeProperties.name": "Include file properties",
@@ -62,9 +62,9 @@ const en = {
     "settings.language.fi": "Suomi",
     "settings.language.en": "English",
     "settings.import.name": "Import from Just Share Please",
-    "settings.import.desc": "Copies the shares and options of the original Just Share Please plugin. Existing shares, the server URL and the token are kept.",
+    "settings.import.desc": "Copies the shares and options of Just Share Please (Self-hosted) and the original Just Share Please plugin. Existing shares are kept. The server URL, and the token from the self-hosted version, are only taken if none is set yet.",
 
-    "view.title": "Just Share Please",
+    "view.title": "Lappu",
     "view.empty": "You have not shared any items yet.",
     "view.fileMissing": "File does not exist anymore"
 };
@@ -72,25 +72,25 @@ const en = {
 export type TranslationKey = keyof typeof en;
 
 const fi: Record<TranslationKey, string> = {
-    "command.openView": "Avaa Just Share Please -näkymä",
-    "command.share": "Jaa nykyinen tiedosto JSP:hen",
-    "command.copy": "Kopioi nykyisen tiedoston JSP-linkki",
-    "command.update": "Päivitä nykyinen tiedosto JSP:ssä",
-    "command.delete": "Poista nykyinen tiedosto JSP:stä",
+    "command.openView": "Avaa Lappu-näkymä",
+    "command.share": "Jaa nykyinen tiedosto lappuna",
+    "command.copy": "Kopioi nykyisen tiedoston Lappu-linkki",
+    "command.update": "Päivitä nykyisen tiedoston lappu",
+    "command.delete": "Poista nykyisen tiedoston lappu",
     "command.import": "Tuo jaot Just Share Pleasesta",
 
-    "action.share": "Jaa JSP:hen",
-    "action.copy": "Kopioi JSP-linkki",
-    "action.update": "Päivitä JSP:ssä",
-    "action.delete": "Poista JSP:stä",
+    "action.share": "Jaa lappuna",
+    "action.copy": "Kopioi Lappu-linkki",
+    "action.update": "Päivitä lappu",
+    "action.delete": "Poista lappu",
     "action.open": "Avaa Obsidianissa",
 
     "notice.shared": "{name} jaettiin ja linkki kopioitiin leikepöydälle",
-    "notice.updated": "{name} päivitettiin JSP:ssä",
-    "notice.deleted": "{name} poistettiin JSP:stä",
+    "notice.updated": "Muistiinpanon {name} lappu päivitettiin",
+    "notice.deleted": "Muistiinpanon {name} lappu poistettiin",
     "notice.localDeleted": "Muistiinpanon {name} paikalliset jakotiedot poistettiin",
     "notice.linkCopied": "Muistiinpanon {name} linkki kopioitiin leikepöydälle",
-    "notice.notConfigured": "Aseta ensin palvelimen URL ja token Just Share Please (Self-hosted) -asetuksissa.",
+    "notice.notConfigured": "Aseta ensin palvelimen URL ja token Lappu-pluginin asetuksissa.",
 
     "button.openSettings": "Avaa asetukset",
     "button.forceDeleteLocal": "Poista paikalliset tiedot väkisin",
@@ -106,14 +106,14 @@ const fi: Record<TranslationKey, string> = {
     "error.rateLimited": "Liian monta epäonnistunutta yritystä. Yritä myöhemmin uudelleen.",
     "error.other": "Palvelin vastasi tilakoodilla {status}.",
 
-    "import.offer": "Alkuperäisen Just Share Please -pluginin jakoja löytyi.",
+    "import.offer": "Aiemman Just Share Please -pluginin jakoja löytyi.",
     "import.button": "Tuo jaot Just Share Pleasesta",
     "import.done": "Asetukset ja {count} uutta jakoa tuotiin Just Share Pleasesta.",
     "import.notFound": "Tästä holvista ei löytynyt Just Share Pleasen tietoja.",
     "import.failed": "Tuonti Just Share Pleasesta epäonnistui: {error}",
 
     "settings.url.name": "Palvelimen URL",
-    "settings.url.desc": "Oman Just Share Please -palvelimesi osoite, esimerkiksi https://jsp.example.com.",
+    "settings.url.desc": "Oman Lappu-palvelimesi osoite, esimerkiksi https://lappu.example.com.",
     "settings.token.name": "Token",
     "settings.token.desc": "Palvelimelle määritetty lähetystoken. Se lähetetään jaettaessa, päivitettäessä ja poistettaessa.",
     "settings.includeProperties.name": "Sisällytä tiedoston ominaisuudet",
@@ -130,9 +130,9 @@ const fi: Record<TranslationKey, string> = {
     "settings.language.fi": "Suomi",
     "settings.language.en": "English",
     "settings.import.name": "Tuo Just Share Pleasesta",
-    "settings.import.desc": "Kopioi alkuperäisen Just Share Please -pluginin jaot ja asetukset. Nykyiset jaot, palvelimen URL ja token säilyvät.",
+    "settings.import.desc": "Kopioi Just Share Please (Self-hosted)- ja alkuperäisen Just Share Please -pluginin jaot ja asetukset. Nykyiset jaot säilyvät. Palvelimen URL ja self-hosted-version token otetaan vain, jos niitä ei ole vielä asetettu.",
 
-    "view.title": "Just Share Please",
+    "view.title": "Lappu",
     "view.empty": "Et ole vielä jakanut mitään.",
     "view.fileMissing": "Tiedostoa ei ole enää olemassa"
 };

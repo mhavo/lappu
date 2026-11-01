@@ -1,9 +1,9 @@
 {
-    "id": "just-share-please-selfhosted",
-    "name": "Just Share Please (Self-hosted)",
-    "version": "1.0.0",
+    "id": "lappu",
+    "name": "Lappu",
+    "version": "2.0.0",
     "minAppVersion": "1.11.0",
-    "description": "Share individual notes via an anonymized link on your own self-hosted Just Share Please server.",
+    "description": "Share notes as a link — a note on the wall — on your own self-hosted Lappu server.",
     "author": "Miika Havo",
     "authorUrl": "https://github.com/mhavo",
     "isDesktopOnly": false

@@ -1,8 +1,8 @@
 import {describe, expect, it} from "vitest";
-import {mergeImported} from "../src/import";
-import {defaultSettings, JSPSettings} from "../src/settings";
+import {IMPORT_SOURCES, mergeImported} from "../src/import";
+import {defaultSettings, LappuSettings} from "../src/settings";
 
-function settings(overrides: Partial<JSPSettings> = {}): JSPSettings {
+function settings(overrides: Partial<LappuSettings> = {}): LappuSettings {
     return {...defaultSettings, shared: [], ...overrides};
 }
 
@@ -51,7 +51,7 @@ describe("mergeImported", () => {
         expect(result.settings.url).toBe("");
     });
 
-    it("never touches the token or language", () => {
+    it("never touches the token or language from the original plugin", () => {
         let current = settings({token: "secret", language: "fi"});
         let result = mergeImported(current, {token: "x", language: "en"} as never);
         expect(result.settings.token).toBe("secret");
@@ -80,5 +80,49 @@ describe("mergeImported", () => {
         mergeImported(current, imported);
         expect(current.shared).toHaveLength(1);
         expect(imported.shared).toHaveLength(1);
+    });
+
+    it("takes the token and language from a trusted source when none are set", () => {
+        let result = mergeImported(settings(), {token: "old-token", language: "fi"}, {trusted: true});
+        expect(result.settings.token).toBe("old-token");
+        expect(result.settings.language).toBe("fi");
+    });
+
+    it("keeps an already configured token and explicit language even from a trusted source", () => {
+        let result = mergeImported(settings({token: "mine", language: "en"}), {token: "old", language: "fi"}, {trusted: true});
+        expect(result.settings.token).toBe("mine");
+        expect(result.settings.language).toBe("en");
+    });
+
+    it("ignores malformed token and language from a trusted source", () => {
+        let result = mergeImported(settings(), {token: 42, language: "xx"} as never, {trusted: true});
+        expect(result.settings.token).toBe("");
+        expect(result.settings.language).toBe("auto");
+    });
+
+    it("still rejects the original public server url from a trusted source", () => {
+        let result = mergeImported(settings(), {url: "https://jsp.ellpeck.de/"}, {trusted: true});
+        expect(result.settings.url).toBe("");
+    });
+});
+
+describe("IMPORT_SOURCES", () => {
+    it("lists the previous self-hosted plugin first, trusted, and the original plugin untrusted", () => {
+        expect(IMPORT_SOURCES).toEqual([
+            {id: "just-share-please-selfhosted", trusted: true},
+            {id: "just-share-please", trusted: false}
+        ]);
+    });
+
+    it("lets the previous self-hosted url win when merging sources in order", () => {
+        let current = settings();
+        for (let [source, data] of [
+            [IMPORT_SOURCES[0], {url: "https://previous.example.com", token: "t", shared: [{id: "a1", password: "p", path: "A.md"}]}],
+            [IMPORT_SOURCES[1], {url: "https://original.example.com", token: "upstream", shared: [{id: "b2", password: "p", path: "B.md"}]}]
+        ] as const)
+            current = mergeImported(current, data, {trusted: source.trusted}).settings;
+        expect(current.url).toBe("https://previous.example.com");
+        expect(current.token).toBe("t");
+        expect(current.shared.map(s => s.id)).toEqual(["a1", "b2"]);
     });
 });

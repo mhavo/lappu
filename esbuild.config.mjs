@@ -49,7 +49,7 @@ const context = await esbuild.context({
             build.onEnd(result => {
                 if (result.errors.length)
                     return;
-                const target = './test-vault/.obsidian/plugins/just-share-please-selfhosted';
+                const target = './test-vault/.obsidian/plugins/lappu';
                 fs.mkdirSync(target, {recursive: true});
                 for (const file of ['manifest.json', 'main.js', 'styles.css'])
                     fs.copyFileSync(file, `${target}/${file}`);

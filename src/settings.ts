@@ -1,6 +1,6 @@
 import type {LanguageSetting} from "./i18n";
 
-export const defaultSettings: JSPSettings = {
+export const defaultSettings: LappuSettings = {
     url: "",
     token: "",
     language: "auto",
@@ -11,7 +11,7 @@ export const defaultSettings: JSPSettings = {
     autoUpdateShares: false
 };
 
-export interface JSPSettings {
+export interface LappuSettings {
 
     url: string;
     token: string;

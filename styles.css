@@ -1,25 +1,25 @@
-.just-share-please-notice-buttons {
+.lappu-notice-buttons {
     padding-top: 1em;
 }
 
-.just-share-please-view .clickable-icon {
+.lappu-view .clickable-icon {
     display: inline-block;
     width: 30px;
     height: 30px;
 }
 
-.just-share-please-shared-name {
+.lappu-shared-name {
     display: block;
     font-weight: bold;
     padding-bottom: 5px;
 }
 
-.just-share-please-shared-path {
+.lappu-shared-path {
     display: block;
     padding-bottom: 5px;
     font-size: 13px;
 }
 
-.just-share-please-shared-item {
+.lappu-shared-item {
     margin-bottom: 20px;
 }

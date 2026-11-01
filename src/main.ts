@@ -1,10 +1,10 @@
 import {arrayBufferToBase64, ButtonComponent, moment, Notice, Plugin, requestUrl, TFile} from "obsidian";
-import {defaultSettings, JSPSettings, SharedItem} from "./settings";
-import {JSPSettingsTab} from "./settings-tab";
-import {JSPView} from "./view";
+import {defaultSettings, LappuSettings, SharedItem} from "./settings";
+import {LappuSettingsTab} from "./settings-tab";
+import {LappuView} from "./view";
 import {Language, resolveLanguage, translate, TranslationKey} from "./i18n";
 import {baseUrl, buildHeaders, classifyResponse, isConfigured, Operation, ResponseKind, shareEndpoint} from "./http";
-import {mergeImported, ORIGINAL_PLUGIN_ID} from "./import";
+import {IMPORT_SOURCES, ImportSource, mergeImported} from "./import";
 
 interface ServerResponse {
     status: number;
@@ -20,22 +20,22 @@ const ERROR_MESSAGES: Record<Exclude<ResponseKind, "ok" | "other">, TranslationK
     rateLimited: "error.rateLimited"
 };
 
-export default class JustSharePleasePlugin extends Plugin {
+export default class LappuPlugin extends Plugin {
 
-    public settings: JSPSettings;
+    public settings: LappuSettings;
 
     async onload(): Promise<void> {
         let hadData = await this.loadSettings();
-        this.addSettingTab(new JSPSettingsTab(this.app, this));
+        this.addSettingTab(new LappuSettingsTab(this.app, this));
 
-        this.registerView(JSPView.type, l => new JSPView(this, l));
+        this.registerView(LappuView.type, l => new LappuView(this, l));
         this.addCommand({
-            id: `open-${JSPView.type}`,
+            id: `open-${LappuView.type}`,
             name: this.t("command.openView"),
             callback: async () => {
-                if (!this.app.workspace.getLeavesOfType(JSPView.type).length)
-                    await this.app.workspace.getRightLeaf(false).setViewState({type: JSPView.type, active: true});
-                this.app.workspace.revealLeaf(this.app.workspace.getLeavesOfType(JSPView.type)[0]);
+                if (!this.app.workspace.getLeavesOfType(LappuView.type).length)
+                    await this.app.workspace.getRightLeaf(false).setViewState({type: LappuView.type, active: true});
+                this.app.workspace.revealLeaf(this.app.workspace.getLeavesOfType(LappuView.type)[0]);
             }
         });
 
@@ -149,12 +149,12 @@ export default class JustSharePleasePlugin extends Plugin {
             }
         });
         this.addCommand({
-            id: "import-original",
+            id: "import-previous",
             name: this.t("command.import"),
-            callback: () => this.importFromOriginal()
+            callback: () => this.importFromPreviousPlugins()
         });
 
-        if (!hadData && await this.hasOriginalData())
+        if (!hadData && (await this.findImportSources()).length)
             this.app.workspace.onLayoutReady(() => this.offerImport());
     }
 
@@ -188,43 +188,59 @@ export default class JustSharePleasePlugin extends Plugin {
         return this.settings.shared.find(f => f.path == path);
     }
 
-    private originalDataPath(): string {
-        return `${this.app.vault.configDir}/plugins/${ORIGINAL_PLUGIN_ID}/data.json`;
+    private sourceDataPath(source: ImportSource): string {
+        return `${this.app.vault.configDir}/plugins/${source.id}/data.json`;
     }
 
-    async hasOriginalData(): Promise<boolean> {
-        try {
-            return await this.app.vault.adapter.exists(this.originalDataPath());
-        } catch (e) {
-            return false;
+    /** Import sources (see IMPORT_SOURCES) that have a data.json in this vault, in merge order. */
+    async findImportSources(): Promise<ImportSource[]> {
+        let found: ImportSource[] = [];
+        for (let source of IMPORT_SOURCES) {
+            try {
+                if (await this.app.vault.adapter.exists(this.sourceDataPath(source)))
+                    found.push(source);
+            } catch (e) {
+                // treat an unreadable location as missing
+            }
         }
+        return found;
     }
 
     private offerImport(): void {
         let notice = new Notice(createFragment(f => {
             f.createSpan({text: this.t("import.offer")});
-            new ButtonComponent(f.createDiv({cls: "just-share-please-notice-buttons"}))
+            new ButtonComponent(f.createDiv({cls: "lappu-notice-buttons"}))
                 .setButtonText(this.t("import.button"))
                 .onClick(async () => {
                     notice.hide();
-                    await this.importFromOriginal();
+                    await this.importFromPreviousPlugins();
                 });
         }), 0);
     }
 
-    /** Imports url, shares and options from the original plugin's data.json. */
-    async importFromOriginal(): Promise<boolean> {
+    /**
+     * Imports url, shares and options from earlier plugins' data.json files, previous
+     * self-hosted install first so its url and token win over the original plugin's.
+     */
+    async importFromPreviousPlugins(): Promise<boolean> {
         try {
-            if (!await this.hasOriginalData()) {
+            let sources = await this.findImportSources();
+            if (!sources.length) {
                 new Notice(this.t("import.notFound"));
                 return false;
             }
-            let imported = JSON.parse(await this.app.vault.adapter.read(this.originalDataPath()));
-            let result = mergeImported(this.settings, imported);
-            this.settings = result.settings;
+            let settings = this.settings;
+            let added = 0;
+            for (let source of sources) {
+                let imported = JSON.parse(await this.app.vault.adapter.read(this.sourceDataPath(source)));
+                let result = mergeImported(settings, imported, {trusted: source.trusted});
+                settings = result.settings;
+                added += result.added;
+            }
+            this.settings = settings;
             await this.saveSettings();
             this.refreshAllViews();
-            new Notice(this.t("import.done", {count: result.added}));
+            new Notice(this.t("import.done", {count: added}));
             return true;
         } catch (e) {
             new Notice(this.t("import.failed", {error: String(e)}), 10000);
@@ -248,7 +264,7 @@ export default class JustSharePleasePlugin extends Plugin {
             return true;
         let notice = new Notice(createFragment(f => {
             f.createSpan({text: this.t("notice.notConfigured")});
-            new ButtonComponent(f.createDiv({cls: "just-share-please-notice-buttons"}))
+            new ButtonComponent(f.createDiv({cls: "lappu-notice-buttons"}))
                 .setButtonText(this.t("button.openSettings"))
                 .onClick(() => {
                     notice.hide();
@@ -288,7 +304,7 @@ export default class JustSharePleasePlugin extends Plugin {
             f.createSpan({text: `${this.t(titleKey, {name})} `});
             f.createEl("code", {text: detail});
             if (localItem && buttonKey) {
-                new ButtonComponent(f.createDiv({cls: "just-share-please-notice-buttons"}))
+                new ButtonComponent(f.createDiv({cls: "lappu-notice-buttons"}))
                     .setButtonText(this.t(buttonKey))
                     .onClick(async _ => {
                         notice.hide();
@@ -429,8 +445,8 @@ export default class JustSharePleasePlugin extends Plugin {
     }
 
     refreshAllViews(): void {
-        for (let leaf of this.app.workspace.getLeavesOfType(JSPView.type)) {
-            if (leaf.view instanceof JSPView)
+        for (let leaf of this.app.workspace.getLeavesOfType(LappuView.type)) {
+            if (leaf.view instanceof LappuView)
                 leaf.view.refresh();
         }
     }

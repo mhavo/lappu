@@ -1,5 +1,5 @@
-// Package jsp embeds the viewer served by the Go server.
-package jsp
+// Package lappu embeds the viewer served by the Go server.
+package lappu
 
 import (
 	"embed"

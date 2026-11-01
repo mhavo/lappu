@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mhavo/ObsidianJustSharePlease/server/internal/store"
+	"github.com/mhavo/lappu/server/internal/store"
 )
 
 // Per-client limits: failed write attempts (refilled over failureWindow) and,

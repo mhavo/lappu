@@ -1,4 +1,4 @@
-// Command jsp serves Just Share Please shares and the viewer.
+// Command lappu serves Lappu shares and the viewer.
 package main
 
 import (
@@ -11,9 +11,9 @@ import (
 	"syscall"
 	"time"
 
-	jsp "github.com/mhavo/ObsidianJustSharePlease/server"
-	"github.com/mhavo/ObsidianJustSharePlease/server/internal/api"
-	"github.com/mhavo/ObsidianJustSharePlease/server/internal/store"
+	lappu "github.com/mhavo/lappu/server"
+	"github.com/mhavo/lappu/server/internal/api"
+	"github.com/mhavo/lappu/server/internal/store"
 )
 
 func main() {
@@ -30,7 +30,7 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	if cfg.Token == "" {
-		logger.Warn("JSP_ALLOW_ANONYMOUS_UPLOADS=true and no token: anyone can upload")
+		logger.Warn("LAPPU_ALLOW_ANONYMOUS_UPLOADS=true and no token: anyone can upload")
 	}
 	st, err := store.New(cfg.DataDir)
 	if err != nil {
@@ -46,7 +46,7 @@ func run(logger *slog.Logger) error {
 			MaxBodyBytes:   cfg.MaxBodyBytes,
 			TrustedProxies: cfg.TrustedProxies,
 			QuotesFile:     cfg.QuotesFile,
-			Static:         jsp.Public(),
+			Static:         lappu.Public(),
 			Logger:         logger,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,

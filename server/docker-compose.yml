@@ -1,14 +1,16 @@
 # Example for self-hosting. Put a reverse proxy with TLS (e.g. Caddy) in front.
 services:
-  jsp:
+  lappu:
     build: .
+    image: lappu
+    container_name: lappu
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:80"
     environment:
       # Required: at least 32 characters, e.g. `openssl rand -hex 32`.
-      # Alternatively mount a secret and set JSP_UPLOAD_TOKEN_FILE.
-      JSP_UPLOAD_TOKEN: ${JSP_UPLOAD_TOKEN:?set JSP_UPLOAD_TOKEN}
+      # Alternatively mount a secret and set LAPPU_UPLOAD_TOKEN_FILE.
+      LAPPU_UPLOAD_TOKEN: ${LAPPU_UPLOAD_TOKEN:?set LAPPU_UPLOAD_TOKEN}
     # The image runs as UID/GID 33; ./data and ./quotes must be accessible to it
     # (e.g. `sudo chown -R 33:33 data quotes`), or set `user:` to their owner.
     volumes:

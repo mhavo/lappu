@@ -1,5 +1,5 @@
-const { getIdFromHash, classifyId, formatParts, safeFileName, buildObsidianNewUrl, buildDownloadHref } = JspViewer;
-const LANGUAGE_STORAGE_KEY = "jsp-language";
+const { getIdFromHash, classifyId, formatParts, safeFileName, buildObsidianNewUrl, buildDownloadHref } = LappuViewer;
+const LANGUAGE_STORAGE_KEY = "lappu-language";
 
 let md = markdownit({
     html: true,
@@ -46,7 +46,7 @@ let noteFooter = $("#note-footer");
 let download = $("#download-markdown");
 let open = $("#open-in-obsidian");
 
-let language = JspI18n.resolveLanguage(readStoredLanguage(), navigator.language);
+let language = LappuI18n.resolveLanguage(readStoredLanguage(), navigator.language);
 // what #main currently shows when it is a UI message rather than a note, so it can be re-rendered on language change
 let currentMessage = null;
 // the last loaded note footer data, so it can be re-rendered on language change
@@ -193,7 +193,7 @@ function buildNodes(template, params, renderParam) {
 
 function renderStaticStrings() {
     $("#footer-credit").empty().append(buildNodes(t("createdUsing"), {
-        app: "Just Share Please",
+        app: "Lappu",
         obsidian: "Obsidian"
     }, (value, name) => $("<a>").attr("href", name === "app" ? "/" : "https://obsidian.md").text(value)));
     download.text(t("downloadMarkdown"));
@@ -210,7 +210,7 @@ function applyLanguage() {
 }
 
 function setLanguage(lang) {
-    if (!JspI18n.languages.includes(lang) || lang === language)
+    if (!LappuI18n.languages.includes(lang) || lang === language)
         return;
     language = lang;
     try {
@@ -230,7 +230,7 @@ function readStoredLanguage() {
 }
 
 function t(key) {
-    return JspI18n.translate(language, key);
+    return LappuI18n.translate(language, key);
 }
 
 function findHashTarget() {

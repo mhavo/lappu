@@ -15,7 +15,7 @@ func envFrom(m map[string]string) func(string) string {
 }
 
 func TestConfigDefaults(t *testing.T) {
-	c, err := loadConfig(envFrom(map[string]string{"JSP_UPLOAD_TOKEN": token}))
+	c, err := loadConfig(envFrom(map[string]string{"LAPPU_UPLOAD_TOKEN": token}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,12 +36,12 @@ func TestConfigDefaults(t *testing.T) {
 
 func TestConfigOverrides(t *testing.T) {
 	c, err := loadConfig(envFrom(map[string]string{
-		"JSP_UPLOAD_TOKEN":    token,
-		"JSP_LISTEN":          "127.0.0.1:8080",
-		"JSP_DATA_DIR":        "/d",
-		"JSP_QUOTES_FILE":     "/q.csv",
-		"JSP_MAX_BODY_BYTES":  "100",
-		"JSP_TRUSTED_PROXIES": " 10.1.0.0/16 , 192.0.2.1 ",
+		"LAPPU_UPLOAD_TOKEN":    token,
+		"LAPPU_LISTEN":          "127.0.0.1:8080",
+		"LAPPU_DATA_DIR":        "/d",
+		"LAPPU_QUOTES_FILE":     "/q.csv",
+		"LAPPU_MAX_BODY_BYTES":  "100",
+		"LAPPU_TRUSTED_PROXIES": " 10.1.0.0/16 , 192.0.2.1 ",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -52,16 +52,16 @@ func TestConfigOverrides(t *testing.T) {
 	if len(c.TrustedProxies) != 2 || c.TrustedProxies[1] != netip.MustParsePrefix("192.0.2.1/32") {
 		t.Errorf("proxies: %v", c.TrustedProxies)
 	}
-	c, err = loadConfig(envFrom(map[string]string{"JSP_UPLOAD_TOKEN": token, "JSP_TRUSTED_PROXIES": ""}))
+	c, err = loadConfig(envFrom(map[string]string{"LAPPU_UPLOAD_TOKEN": token, "LAPPU_TRUSTED_PROXIES": ""}))
 	if err != nil || len(c.TrustedProxies) == 0 {
-		t.Errorf("empty JSP_TRUSTED_PROXIES should mean default: %v %v", c.TrustedProxies, err)
+		t.Errorf("empty LAPPU_TRUSTED_PROXIES should mean default: %v %v", c.TrustedProxies, err)
 	}
 }
 
 func TestConfigTokenFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "token")
 	os.WriteFile(path, []byte(token+"\n"), 0o600)
-	c, err := loadConfig(envFrom(map[string]string{"JSP_UPLOAD_TOKEN_FILE": path}))
+	c, err := loadConfig(envFrom(map[string]string{"LAPPU_UPLOAD_TOKEN_FILE": path}))
 	if err != nil || c.Token != token {
 		t.Errorf("token %q, err %v", c.Token, err)
 	}
@@ -70,13 +70,13 @@ func TestConfigTokenFile(t *testing.T) {
 func TestConfigErrors(t *testing.T) {
 	cases := map[string]map[string]string{
 		"no token":           {},
-		"short token":        {"JSP_UPLOAD_TOKEN": "short"},
-		"both token sources": {"JSP_UPLOAD_TOKEN": token, "JSP_UPLOAD_TOKEN_FILE": "/x"},
-		"missing token file": {"JSP_UPLOAD_TOKEN_FILE": "/does/not/exist"},
-		"bad anonymous flag": {"JSP_UPLOAD_TOKEN": token, "JSP_ALLOW_ANONYMOUS_UPLOADS": "yes please"},
-		"bad body limit":     {"JSP_UPLOAD_TOKEN": token, "JSP_MAX_BODY_BYTES": "0"},
-		"bad proxy":          {"JSP_UPLOAD_TOKEN": token, "JSP_TRUSTED_PROXIES": "nope"},
-		"short anon token":   {"JSP_UPLOAD_TOKEN": "short", "JSP_ALLOW_ANONYMOUS_UPLOADS": "true"},
+		"short token":        {"LAPPU_UPLOAD_TOKEN": "short"},
+		"both token sources": {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_UPLOAD_TOKEN_FILE": "/x"},
+		"missing token file": {"LAPPU_UPLOAD_TOKEN_FILE": "/does/not/exist"},
+		"bad anonymous flag": {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_ALLOW_ANONYMOUS_UPLOADS": "yes please"},
+		"bad body limit":     {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_MAX_BODY_BYTES": "0"},
+		"bad proxy":          {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_TRUSTED_PROXIES": "nope"},
+		"short anon token":   {"LAPPU_UPLOAD_TOKEN": "short", "LAPPU_ALLOW_ANONYMOUS_UPLOADS": "true"},
 	}
 	for name, env := range cases {
 		if _, err := loadConfig(envFrom(env)); err == nil {
@@ -84,13 +84,13 @@ func TestConfigErrors(t *testing.T) {
 		}
 	}
 	_, err := loadConfig(envFrom(map[string]string{}))
-	if !strings.Contains(err.Error(), "JSP_UPLOAD_TOKEN") {
+	if !strings.Contains(err.Error(), "LAPPU_UPLOAD_TOKEN") {
 		t.Errorf("unhelpful error: %v", err)
 	}
 }
 
 func TestConfigAnonymousWithoutToken(t *testing.T) {
-	c, err := loadConfig(envFrom(map[string]string{"JSP_ALLOW_ANONYMOUS_UPLOADS": "true"}))
+	c, err := loadConfig(envFrom(map[string]string{"LAPPU_ALLOW_ANONYMOUS_UPLOADS": "true"}))
 	if err != nil || !c.AllowAnonymous || c.Token != "" {
 		t.Errorf("%+v %v", c, err)
 	}

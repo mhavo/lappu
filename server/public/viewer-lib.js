@@ -1,5 +1,5 @@
 // Pure helper functions for the viewer. Works both in the browser
-// (exposed as globalThis.JspViewer) and in Node (module.exports) for tests.
+// (exposed as globalThis.LappuViewer) and in Node (module.exports) for tests.
 (function (root) {
     "use strict";
 
@@ -82,5 +82,5 @@
     if (typeof module === "object" && module.exports)
         module.exports = api;
     else
-        root.JspViewer = api;
+        root.LappuViewer = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

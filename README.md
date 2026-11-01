@@ -28,7 +28,7 @@ Based on [Just Share Please](https://github.com/Ellpeck/ObsidianJustSharePlease)
 
 The plugin is not in the Obsidian community plugin list. Install it in one of these ways:
 
-- **BRAT:** install [BRAT](https://github.com/TfTHacker/obsidian42-brat), choose *Add beta plugin* and enter `mhavo/lappu`. BRAT installs the latest release and keeps it updated. The repository is private, so first add a GitHub personal access token in BRAT's settings: a fine-grained token limited to `mhavo/lappu` with read-only *Contents* access is enough.
+- **BRAT:** install [BRAT](https://github.com/TfTHacker/obsidian42-brat), choose *Add beta plugin* and enter `mhavo/lappu`. BRAT installs the latest release and keeps it updated.
 - **Manually:** download `main.js`, `manifest.json` and `styles.css` from the [latest release](https://github.com/mhavo/lappu/releases/latest). Put them in `<vault>/.obsidian/plugins/lappu/`, then enable *Lappu* under *Settings → Community plugins*.
 
 Then open the plugin settings and set:

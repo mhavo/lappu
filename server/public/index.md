@@ -6,6 +6,8 @@ Lappu is a self-hosted [Obsidian](https://obsidian.md) plugin and server for sha
 
 Notes are stored on this server **in plain text**, so the server's administrator can read them. Only the person who shared a note can update or delete it.
 
+The source code is on [GitHub](https://github.com/mhavo/lappu).
+
 ---
 
 ## Suomeksi
@@ -15,6 +17,8 @@ Notes are stored on this server **in plain text**, so the server's administrator
 Lappu on itse ylläpidettävä [Obsidian](https://obsidian.md)-lisäosa ja palvelin yksittäisten muistiinpanojen jakamiseen nimettömällä linkillä. Jaetun linkin kautta muistiinpanon voi lukea, ladata Markdown-tiedostona tai kopioida omaan holviisi.
 
 Muistiinpanot tallennetaan tälle palvelimelle **selväkielisinä**, joten palvelimen ylläpitäjä voi lukea ne. Vain muistiinpanon jakaja voi päivittää tai poistaa sen.
+
+Lähdekoodi on [GitHubissa](https://github.com/mhavo/lappu).
 
 ---
 

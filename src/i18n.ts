@@ -23,6 +23,7 @@ const en = {
     "notice.localDeleted": "Successfully deleted local information for {name}",
     "notice.linkCopied": "Copied link to {name} to clipboard",
     "notice.notConfigured": "Set the server URL and token in the Lappu settings first.",
+    "notice.expiryUnsupported": "The server did not set an expiry, so {name} stays shared until you delete it.",
 
     "button.openSettings": "Open settings",
     "button.forceDeleteLocal": "Force-delete local information",
@@ -102,6 +103,7 @@ const fi: Record<TranslationKey, string> = {
     "notice.localDeleted": "Muistiinpanon {name} paikalliset jakotiedot poistettiin",
     "notice.linkCopied": "Muistiinpanon {name} linkki kopioitiin leikepöydälle",
     "notice.notConfigured": "Aseta ensin palvelimen URL ja token Lappu-pluginin asetuksissa.",
+    "notice.expiryUnsupported": "Palvelin ei asettanut vanhenemisaikaa, joten {name} pysyy jaettuna, kunnes poistat sen.",
 
     "button.openSettings": "Avaa asetukset",
     "button.forceDeleteLocal": "Poista paikalliset tiedot väkisin",

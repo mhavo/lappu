@@ -350,6 +350,9 @@ export default class LappuPlugin extends Plugin {
 
             await this.copyShareLink(shared, false);
             new Notice(this.t("notice.shared", {name: file.basename}));
+            // Older servers ignore expiresIn; the user must not assume the share will vanish.
+            if (expiry !== "never" && shared.expires === null)
+                new Notice(this.t("notice.expiryUnsupported", {name: file.basename}), 10000);
             return shared;
         } catch (e) {
             this.showError("share", file.basename, String(e));

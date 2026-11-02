@@ -412,3 +412,18 @@ func TestCleanupLoopStopsOnCancel(t *testing.T) {
 		t.Fatal("loop did not stop")
 	}
 }
+
+func TestContentRefusedWhenMetaUnreadable(t *testing.T) {
+	s, dir := newStore(t)
+	sh, err := s.Create("secret", 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A corrupt meta could hide an expiry, so the content must not be served.
+	if err := os.WriteFile(filepath.Join(dir, sh.ID+".json"), []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Content(sh.ID); err == nil || errors.Is(err, ErrNotFound) {
+		t.Fatalf("Content with corrupt meta: err = %v, want a non-NotFound error", err)
+	}
+}

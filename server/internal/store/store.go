@@ -96,9 +96,14 @@ func (s *Store) Content(id string) ([]byte, error) {
 	if !ValidID(id) {
 		return nil, ErrInvalidID
 	}
-	// A missing or unreadable meta does not hide the content, only expiry does.
-	if m, err := s.readMeta(id); err == nil && s.expired(m) {
+	// A missing meta does not hide the content, but expiry does, and an
+	// unreadable meta must not let an expired share through.
+	m, err := s.readMeta(id)
+	if err == nil && s.expired(m) {
 		return nil, ErrNotFound
+	}
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return nil, err
 	}
 	b, err := os.ReadFile(s.contentPath(id))
 	return b, notFound(err)
@@ -225,16 +230,17 @@ func (s *Store) authorize(id, password string) (Meta, error) {
 	return m, nil
 }
 
-// removeFiles deletes both files of a share, best effort; the caller holds the id lock.
+// removeFiles deletes both files of a share; the caller holds the id lock.
+// Content goes first and the meta stays if that fails, so an expired share
+// never ends up as content without a meta (which Content would serve).
 func (s *Store) removeFiles(id string) error {
-	err := os.Remove(s.contentPath(id))
-	if errors.Is(err, fs.ErrNotExist) {
-		err = nil
+	if err := os.Remove(s.contentPath(id)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
 	}
-	if merr := os.Remove(s.metaPath(id)); merr != nil && !errors.Is(merr, fs.ErrNotExist) && err == nil {
-		err = merr
+	if err := os.Remove(s.metaPath(id)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
 	}
-	return err
+	return nil
 }
 
 // DeleteExpired removes every expired share and returns how many it removed.

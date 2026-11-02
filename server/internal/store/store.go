@@ -47,6 +47,9 @@ var (
 	ErrInvalidAttachmentData = errors.New("invalid attachment data")
 	// ErrTooLarge is returned when an attachment exceeds the per-file or per-share limit.
 	ErrTooLarge = errors.New("attachment too large")
+	// ErrNoAttachment is returned when the share exists but the attachment is
+	// not declared or not uploaded. It matches ErrNotFound.
+	ErrNoAttachment = fmt.Errorf("attachment %w", ErrNotFound)
 )
 
 // Attachment limits when SetAttachmentLimits is not called.
@@ -725,24 +728,23 @@ func (s *Store) spool(f *os.File, h hash.Hash, r io.Reader) (int64, error) {
 }
 
 // Attachment opens a stored attachment of a live share. encrypted tells
-// whether the bytes are a ciphertext packet. The caller closes the file.
+// whether the bytes are a ciphertext packet. The caller closes the file. A
+// missing share is ErrNotFound (or ErrInvalidID), a missing attachment of a
+// live share ErrNoAttachment.
 func (s *Store) Attachment(id, name string) (f *os.File, encrypted bool, err error) {
-	if !ValidID(id) {
-		return nil, false, ErrInvalidID
-	}
-	if !ValidAttachmentName(name) {
-		return nil, false, ErrNotFound
-	}
-	m, err := s.Meta(id) // hides expired shares
+	m, err := s.Meta(id) // validates the id and hides expired shares
 	if err != nil {
 		return nil, false, err
 	}
-	if !contains(m.Attachments, name) {
-		return nil, false, ErrNotFound
+	if !ValidAttachmentName(name) || !contains(m.Attachments, name) {
+		return nil, false, ErrNoAttachment
 	}
 	f, err = os.Open(filepath.Join(s.attDir(id), name))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, false, ErrNoAttachment
+	}
 	if err != nil {
-		return nil, false, notFound(err)
+		return nil, false, err
 	}
 	return f, m.Encrypted, nil
 }

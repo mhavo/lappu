@@ -209,3 +209,70 @@ func TestReadLimitDoesNotChargeFailedAuth(t *testing.T) {
 	expect(t, e.do(req{method: "POST", target: "/share.php", body: `{"content":"x"}`,
 		header: map[string]string{"Authorization": "Bearer wrong"}}), 401, "Invalid token")
 }
+
+func TestReadLimitAttachmentsOfExistingShareAreFree(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	e := newEnv(t, func(c *Config) {
+		c.MaxBodyBytes = 1 << 16 // room for 50 attachment names
+		c.LookupFailureLimit = 30
+		c.ReadLimit = 300
+		c.now = func() time.Time { return now }
+	})
+	// 50 declared attachments, none uploaded yet
+	datas := make([]string, 50)
+	for i := range datas {
+		datas[i] = fmt.Sprint("img", i)
+	}
+	s, names := e.shareWith(false, datas...)
+	for _, name := range names {
+		if w := e.do(req{method: "GET", target: "/share.php?att=" + s.ID + "/" + name}); w.Code != 404 {
+			t.Fatalf("missing attachment: %d", w.Code)
+		}
+	}
+	// undeclared or malformed names of an existing share are free too
+	for _, name := range []string{attName("other", "png"), "x"} {
+		if w := e.do(req{method: "GET", target: "/share.php?att=" + s.ID + "/" + name}); w.Code != 404 {
+			t.Fatalf("%s: %d", name, w.Code)
+		}
+	}
+	if w := e.do(req{method: "GET", target: "/share.php?id=" + s.ID}); w.Code != 200 {
+		t.Fatalf("read after missing attachments: %d", w.Code)
+	}
+	// stored attachments: far more reads than ReadLimit
+	if w := e.put(s.ID, names[0], s.Password, png+datas[0]); w.Code != 200 {
+		t.Fatalf("put: %d %s", w.Code, w.Body)
+	}
+	for range 400 {
+		if w := e.do(req{method: "GET", target: "/share.php?att=" + s.ID + "/" + names[0]}); w.Code != 200 {
+			t.Fatalf("stored attachment: %d", w.Code)
+		}
+	}
+	if w := e.do(req{method: "GET", target: "/share.php?id=" + s.ID}); w.Code != 200 {
+		t.Fatalf("read after attachments: %d", w.Code)
+	}
+}
+
+func TestReadLimitAttachmentOfMissingShareIsLookupFailure(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	e := newEnv(t, func(c *Config) {
+		c.LookupFailureLimit = 4
+		c.now = func() time.Time { return now }
+	})
+	s, names := e.shareWith(false, "a")
+	if w := e.put(s.ID, names[0], s.Password, png+"a"); w.Code != 200 {
+		t.Fatalf("put: %d %s", w.Code, w.Body)
+	}
+	for _, target := range []string{"/share.php?att=abcdef12/" + names[0], "/share.php?att=bad/" + names[0],
+		"/share.php?att=" + names[0], "/share.php?att=abcdef12/x"} {
+		if w := e.do(req{method: "GET", target: target}); w.Code != 404 {
+			t.Fatalf("%s: %d", target, w.Code)
+		}
+	}
+	// blocked: every limited read gets 429, attachments of existing shares too
+	for _, target := range []string{"/share.php?att=abcdef12/" + names[0], "/share.php?att=" + s.ID + "/" + names[0],
+		"/share.php?id=" + s.ID} {
+		if w := e.do(req{method: "GET", target: target}); w.Code != 429 {
+			t.Errorf("%s: %d", target, w.Code)
+		}
+	}
+}

@@ -471,3 +471,19 @@ func TestValidCiphertext(t *testing.T) {
 		t.Errorf("update: %v", err)
 	}
 }
+
+func TestAttachmentTellsMissingShareFromMissingFile(t *testing.T) {
+	s, _ := newStore(t)
+	sh, names := newShareWith(t, s, "hello")
+	for _, name := range []string{names[0], "../" + sh.ID + ".json", strings.Repeat("a", 64) + ".png"} {
+		if _, _, err := s.Attachment(sh.ID, name); !errors.Is(err, ErrNoAttachment) || !errors.Is(err, ErrNotFound) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if _, _, err := s.Attachment("abcdef12", names[0]); !errors.Is(err, ErrNotFound) || errors.Is(err, ErrNoAttachment) {
+		t.Errorf("missing share: %v", err)
+	}
+	if _, _, err := s.Attachment("bad", names[0]); !errors.Is(err, ErrInvalidID) {
+		t.Errorf("invalid id: %v", err)
+	}
+}

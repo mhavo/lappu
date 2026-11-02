@@ -3,6 +3,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/csv"
@@ -315,8 +316,10 @@ func isHeader(rec []string) bool {
 
 // limitReads applies the per-client read limits to a read of a share: a
 // client over either limit gets 429, and a read that ends in 404 or 400 (an
-// invalid or missing id) counts as a lookup failure. A valid upload token
-// exempts the request; an invalid one is ignored, as reads need no token.
+// invalid or missing id) counts as a lookup failure. A handler can mark the
+// read free with freeRead, so that it charges neither limit; a blocked client
+// still gets 429 for it. A valid upload token exempts the request; an invalid
+// one is ignored, as reads need no token.
 func (s *server) limitReads(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.validToken(r) {
@@ -328,13 +331,26 @@ func (s *server) limitReads(next http.Handler) http.Handler {
 			text(w, http.StatusTooManyRequests, "Too many requests")
 			return
 		}
-		s.reads.charge(ip)
+		free := new(bool)
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(rec, r)
+		next.ServeHTTP(rec, r.WithContext(context.WithValue(r.Context(), freeReadKey{}, free)))
+		if *free {
+			return
+		}
+		s.reads.charge(ip)
 		if rec.status == http.StatusNotFound || rec.status == http.StatusBadRequest {
 			s.lookups.charge(ip)
 		}
 	})
+}
+
+type freeReadKey struct{}
+
+// freeRead exempts the current read from the limits of limitReads.
+func freeRead(r *http.Request) {
+	if free, ok := r.Context().Value(freeReadKey{}).(*bool); ok {
+		*free = true
+	}
 }
 
 // gate applies the token check and failed-auth rate limiting shared by all
@@ -504,12 +520,17 @@ func (s *server) getAttachment(w http.ResponseWriter, r *http.Request, v string)
 	h.Set("Cross-Origin-Resource-Policy", "same-origin")
 	// Revalidate on every use so that deleting or expiring a share takes effect at once.
 	h.Set("Cache-Control", "no-cache")
-	id, name, ok := splitAttachment(v)
-	if !ok {
+	id, name, found := strings.Cut(v, "/")
+	if !found || !store.ValidID(id) {
 		text(w, http.StatusNotFound, "Not found")
 		return
 	}
 	f, encrypted, err := s.Store.Attachment(id, name)
+	if err == nil || errors.Is(err, store.ErrNoAttachment) {
+		// The share exists: a note with many images, or with images not yet
+		// uploaded, must not use up the read limits. Probing ids stays limited.
+		freeRead(r)
+	}
 	if err != nil {
 		s.storeError(w, err)
 		return

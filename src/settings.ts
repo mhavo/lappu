@@ -42,5 +42,7 @@ export interface SharedItem {
     encryptionPassword?: string;
     /** Whether share links carry the encryption password in their fragment. */
     passwordInLink?: boolean;
+    /** Encrypted shares only: sha256 of each image's plaintext to the attachment name uploaded for it. */
+    attachmentCache?: Record<string, string>;
 
 }

@@ -27,6 +27,8 @@ const en = {
     "notice.expiryUnsupported": "The server did not set an expiry, so {name} stays shared until you delete it.",
     "notice.encryptionUnsupported": "The server did not confirm encryption, so {name} may be shown as unreadable text. Update the server.",
     "notice.passwordCopied": "Copied the password of {name} to clipboard",
+    "notice.embedsSkipped": "{count} embeds were not shared: {list}",
+    "notice.attachmentsUnsupported": "The server does not support attachments, so the images in {name} will not show. Update the server.",
 
     "button.openSettings": "Open settings",
     "button.forceDeleteLocal": "Force-delete local information",
@@ -39,6 +41,8 @@ const en = {
     "error.wrongPassword": "The server rejected the share password.",
     "error.notFound": "The share no longer exists on the server. You can remove its local information.",
     "error.tooLarge": "The note is too large for the server.",
+    "error.attachmentTooLarge": "The image {name} is too large for the server (default limits: 10 MiB per image, 50 MiB per note).",
+    "error.attachmentFailed": "Uploading the image {name} failed:",
     "error.rateLimited": "Too many failed attempts. Try again later.",
     "error.other": "The server responded with status {status}.",
 
@@ -124,6 +128,8 @@ const fi: Record<TranslationKey, string> = {
     "notice.expiryUnsupported": "Palvelin ei asettanut vanhenemisaikaa, joten {name} pysyy jaettuna, kunnes poistat sen.",
     "notice.encryptionUnsupported": "Palvelin ei vahvistanut salausta, joten {name} voi näkyä lukukelvottomana tekstinä. Päivitä palvelin.",
     "notice.passwordCopied": "Muistiinpanon {name} salasana kopioitiin leikepöydälle",
+    "notice.embedsSkipped": "{count} upotusta ei jaettu: {list}",
+    "notice.attachmentsUnsupported": "Palvelin ei tue liitteitä, joten kuvat eivät näy muistiinpanossa {name}. Päivitä palvelin.",
 
     "button.openSettings": "Avaa asetukset",
     "button.forceDeleteLocal": "Poista paikalliset tiedot väkisin",
@@ -136,6 +142,8 @@ const fi: Record<TranslationKey, string> = {
     "error.wrongPassword": "Palvelin hylkäsi jaon salasanan.",
     "error.notFound": "Jakoa ei enää ole palvelimella. Voit poistaa sen paikalliset tiedot.",
     "error.tooLarge": "Muistiinpano on liian suuri palvelimelle.",
+    "error.attachmentTooLarge": "Kuva {name} on liian suuri palvelimelle (oletusrajat: 10 MiB kuvaa kohti, 50 MiB muistiinpanoa kohti).",
+    "error.attachmentFailed": "Kuvan {name} lähettäminen epäonnistui:",
     "error.rateLimited": "Liian monta epäonnistunutta yritystä. Yritä myöhemmin uudelleen.",
     "error.other": "Palvelin vastasi tilakoodilla {status}.",
 

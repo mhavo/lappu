@@ -50,6 +50,17 @@ export function baseUrl(url: string): string {
     return url.trim().replace(/\/+$/, "");
 }
 
+/** Upload url of one attachment of a share; `name` is `<sha256>.<ext>`. */
+export function attachmentEndpoint(url: string, id: string, name: string): string {
+    return `${baseUrl(url)}/share.php?att=${encodeURIComponent(id)}/${encodeURIComponent(name)}`;
+}
+
+/** Names the server still wants uploaded, or null when the response has no `missing` list (older servers). */
+export function parseMissing(json: unknown): string[] | null {
+    let missing = (json as { missing?: unknown } | null)?.missing;
+    return Array.isArray(missing) ? missing.filter((n): n is string => typeof n === "string") : null;
+}
+
 export function shareEndpoint(url: string, id?: string): string {
     let endpoint = `${baseUrl(url)}/share.php`;
     return id === undefined ? endpoint : `${endpoint}?id=${encodeURIComponent(id)}`;

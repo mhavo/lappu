@@ -1,14 +1,25 @@
-import {arrayBufferToBase64, ButtonComponent, moment, Notice, Plugin, requestUrl, TFile} from "obsidian";
+import {ButtonComponent, moment, Notice, Plugin, requestUrl, TFile} from "obsidian";
 import {defaultSettings, LappuSettings, SharedItem} from "./settings";
 import {LappuSettingsTab} from "./settings-tab";
 import {LappuView} from "./view";
 import {Language, resolveLanguage, translate, TranslationKey} from "./i18n";
-import {baseUrl, buildHeaders, classifyResponse, isConfigured, Operation, ResponseKind, shareEndpoint} from "./http";
+import {attachmentEndpoint, baseUrl, buildHeaders, classifyResponse, isConfigured, Operation, parseMissing, ResponseKind, shareEndpoint} from "./http";
 import {buildShareBody, buildUpdateBody, DEFAULT_EXPIRY, isExpiryOption, parseExpires} from "./expiry";
 import {ShareModal} from "./share-modal";
 import {buildShareLink, confirmsEncryption, ShareOptions} from "./encryption";
-import {encrypt} from "./crypter";
+import {encrypt, encryptBytes} from "./crypter";
+import {defaultStore, rewriteAttachments, sha256Hex, Store} from "./attachments";
 import {IMPORT_SOURCES, ImportSource, mergeImported} from "./import";
+
+/** A note ready to upload: rewritten markdown plus the image files it references. */
+interface PreparedNote {
+    markdown: string;
+    /** Attachment name to bytes; null bytes are already on the server (encrypted shares, cached). */
+    attachments: Map<string, Uint8Array | null>;
+    labels: Map<string, string>;
+    /** Plaintext sha256 to uploaded name, for encrypted shares. */
+    cache: Record<string, string>;
+}
 
 interface ServerResponse {
     status: number;
@@ -282,8 +293,12 @@ export default class LappuPlugin extends Plugin {
         return false;
     }
 
-    private async request(method: string, url: string, headers: Record<string, string>, body?: string): Promise<ServerResponse> {
-        let response = await requestUrl({url, method, headers, body, contentType: body !== undefined ? "application/json" : undefined, throw: false});
+    private async request(method: string, url: string, headers: Record<string, string>, body?: string | Uint8Array): Promise<ServerResponse> {
+        let response = await requestUrl({
+            url, method, headers, throw: false,
+            body: body instanceof Uint8Array ? body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer : body,
+            contentType: body === undefined ? undefined : body instanceof Uint8Array ? "application/octet-stream" : "application/json"
+        });
         let text = "";
         try {
             text = response.text;
@@ -336,10 +351,10 @@ export default class LappuPlugin extends Plugin {
         if (!options)
             return undefined;
         try {
-            let markdown = await this.preProcessMarkdown(file);
-            let content = options.encrypt ? await encrypt(options.password, markdown) : markdown;
+            let prepared = await this.prepareNote(file, options.encrypt ? options.password : undefined);
+            let content = options.encrypt ? await encrypt(options.password, prepared.markdown) : prepared.markdown;
             let response = await this.request("POST", shareEndpoint(this.settings.url), buildHeaders(this.settings.token),
-                buildShareBody(content, options.expiry, options.encrypt));
+                buildShareBody(content, options.expiry, options.encrypt, [...prepared.attachments.keys()]));
             let kind = classifyResponse(response.status, response.text, "share");
             let data = response.json as Partial<SharedItem>;
             if (kind !== "ok" || !data || typeof data.id !== "string" || typeof data.password !== "string") {
@@ -351,12 +366,15 @@ export default class LappuPlugin extends Plugin {
                 shared.encrypted = true;
                 shared.encryptionPassword = options.password;
                 shared.passwordInLink = options.passwordInLink;
+                if (Object.keys(prepared.cache).length)
+                    shared.attachmentCache = prepared.cache;
             }
 
             this.settings.shared.push(shared);
             await this.saveSettings();
             this.refreshAllViews();
 
+            await this.uploadAttachments(shared, file, prepared, response.json);
             await this.copyShareLink(shared, false);
             new Notice(this.t("notice.shared", {name: file.basename}));
             // Older servers ignore expiresIn; the user must not assume the share will vanish.
@@ -372,20 +390,35 @@ export default class LappuPlugin extends Plugin {
         }
     }
 
-    async updateFile(item: SharedItem, file: TFile, notice = true): Promise<boolean> {
+    async updateFile(item: SharedItem, file: TFile, notice = true, retry = true): Promise<boolean> {
         if (!this.ensureConfigured())
             return false;
         try {
             let encrypted = !!item.encrypted && !!item.encryptionPassword;
-            let markdown = await this.preProcessMarkdown(file);
+            let prepared = await this.prepareNote(file, encrypted ? item.encryptionPassword : undefined, item.attachmentCache);
             let response = await this.request("PATCH", shareEndpoint(this.settings.url, item.id), buildHeaders(this.settings.token, item.password),
-                buildUpdateBody(encrypted ? await encrypt(item.encryptionPassword, markdown) : markdown, encrypted));
+                buildUpdateBody(encrypted ? await encrypt(item.encryptionPassword, prepared.markdown) : prepared.markdown, encrypted,
+                    [...prepared.attachments.keys()]));
             let kind = classifyResponse(response.status, response.text, "update");
             if (kind !== "ok") {
                 this.showError("update", file.basename, this.describeFailure(kind, response.status),
                     kind === "notFound" ? item : undefined, "button.removeLocal");
                 return false;
             }
+            // A cached name the server no longer has cannot be re-uploaded (the ciphertext is gone): start over without the cache.
+            let missing = parseMissing(response.json) ?? [];
+            if (retry && item.attachmentCache && missing.some(n => prepared.attachments.get(n) === null)) {
+                delete item.attachmentCache;
+                return await this.updateFile(item, file, notice, false);
+            }
+            if (encrypted) {
+                if (Object.keys(prepared.cache).length)
+                    item.attachmentCache = prepared.cache;
+                else
+                    delete item.attachmentCache;
+                await this.saveSettings();
+            }
+            await this.uploadAttachments(item, file, prepared, response.json);
             if (notice)
                 new Notice(this.t("notice.updated", {name: file.basename}));
             // An explicit encrypted: false means the server stored ciphertext as plain text.
@@ -444,6 +477,77 @@ export default class LappuPlugin extends Plugin {
         new Notice(this.t("notice.passwordCopied", {name: removeExtension(item.path)}));
     }
 
+    /** Reads the note, rewrites its local images into attachments and reports embeds that stay unshared. */
+    async prepareNote(file: TFile, encryptionPassword?: string, cache: Record<string, string> = {}): Promise<PreparedNote> {
+        let text = await this.preProcessMarkdown(file);
+        let newCache: Record<string, string> = {};
+        let store: Store = defaultStore;
+        if (encryptionPassword !== undefined) {
+            // Ciphertext differs on every run, so reuse the name uploaded for the same plaintext.
+            store = async (bytes, ext) => {
+                let plain = await sha256Hex(bytes);
+                let known = newCache[plain] ?? cache[plain];
+                if (known) {
+                    newCache[plain] = known;
+                    return {name: known, bytes: null};
+                }
+                let encrypted = await encryptBytes(encryptionPassword, bytes);
+                let name = `${await sha256Hex(encrypted)}.${ext}`;
+                newCache[plain] = name;
+                return {name, bytes: encrypted};
+            };
+        }
+        let result = await rewriteAttachments(text, async link => {
+            let dest = this.app.metadataCache.getFirstLinkpathDest(link, file.path);
+            if (!dest)
+                return null;
+            return {bytes: new Uint8Array(await this.app.vault.readBinary(dest)), ext: dest.extension};
+        }, store);
+        if (result.skipped.length) {
+            let shown = result.skipped.slice(0, 5).join(", ") + (result.skipped.length > 5 ? ", …" : "");
+            new Notice(this.t("notice.embedsSkipped", {count: result.skipped.length, list: shown}), 10000);
+        }
+        return {markdown: result.markdown, attachments: result.attachments, labels: result.labels, cache: newCache};
+    }
+
+    /** Uploads the attachments the server reports missing and tells the user about failures. */
+    private async uploadAttachments(item: SharedItem, file: TFile, prepared: PreparedNote, json: unknown): Promise<void> {
+        if (!prepared.attachments.size)
+            return;
+        let missing = parseMissing(json);
+        if (!missing) {
+            new Notice(this.t("notice.attachmentsUnsupported", {name: file.basename}), 10000);
+            return;
+        }
+        for (let name of missing) {
+            let bytes = prepared.attachments.get(name);
+            if (!bytes)
+                continue;
+            let label = prepared.labels.get(name) ?? name;
+            try {
+                let response = await this.request("PUT", attachmentEndpoint(this.settings.url, item.id, name),
+                    buildHeaders(this.settings.token, item.password), bytes);
+                let kind = classifyResponse(response.status, response.text, "update");
+                if (kind === "ok")
+                    continue;
+                if (kind === "tooLarge")
+                    new Notice(this.t("error.attachmentTooLarge", {name: label}), 10000);
+                else
+                    this.showAttachmentError(label, this.describeFailure(kind, response.status));
+            } catch (e) {
+                this.showAttachmentError(label, String(e));
+                console.log(e);
+            }
+        }
+    }
+
+    private showAttachmentError(name: string, detail: string): void {
+        new Notice(createFragment(f => {
+            f.createSpan({text: `${this.t("error.attachmentFailed", {name})} `});
+            f.createEl("code", {text: detail});
+        }), 10000);
+    }
+
     async preProcessMarkdown(file: TFile): Promise<string> {
         let text = await this.app.vault.cachedRead(file);
 
@@ -462,25 +566,6 @@ export default class LappuPlugin extends Plugin {
                 text = text.replace(frontmatter, `$1\n\n${title}$2`);
             } else {
                 text = title + text;
-            }
-        }
-
-        // embed attachments directly
-        let attachments = /!\[(.*)]\((.+)\)|!\[\[(.+)]]/g;
-        let match: RegExpExecArray;
-        while ((match = attachments.exec(text)) != null) {
-            let alt = match[1] ?? "";
-            let url = decodeURI(match[2] ?? match[3]);
-            if (url.startsWith("http"))
-                continue;
-            try {
-                let resolved = this.app.metadataCache.getFirstLinkpathDest(url, file.path).path;
-                let attachment = this.app.vault.getAbstractFileByPath(resolved);
-                let data = arrayBufferToBase64(await this.app.vault.readBinary(attachment as TFile));
-                let img = `<img src="data:image/${resolved.split(".").pop()};base64, ${data}" alt="${alt}">`;
-                text = text.substring(0, match.index) + img + text.substring(match.index + match[0].length);
-            } catch (e) {
-                console.log(`Error embedding attachment ${url}: ${e}`);
             }
         }
 

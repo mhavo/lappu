@@ -15,7 +15,14 @@
             copyToObsidian: "Copy to Obsidian",
             shared: "Shared: {date}",
             expires: "Expires: {date}",
-            language: "Language"
+            language: "Language",
+            encryptedNote: "This note is encrypted",
+            password: "Password",
+            openNote: "Open",
+            wrongPassword: "Wrong password",
+            decrypting: "Decrypting...",
+            invalidEncrypted: "The encrypted note is damaged or in an unknown format.",
+            cryptoUnavailable: "Decryption needs a secure connection (https) and a browser with WebAssembly support."
         },
         fi: {
             loading: "Ladataan...",
@@ -27,7 +34,14 @@
             copyToObsidian: "Kopioi Obsidianiin",
             shared: "Jaettu: {date}",
             expires: "Vanhenee: {date}",
-            language: "Kieli"
+            language: "Kieli",
+            encryptedNote: "Tämä lappu on salattu",
+            password: "Salasana",
+            openNote: "Avaa",
+            wrongPassword: "Väärä salasana",
+            decrypting: "Puretaan salausta...",
+            invalidEncrypted: "Salattu lappu on vioittunut tai tuntemattomassa muodossa.",
+            cryptoUnavailable: "Salauksen purku vaatii suojatun yhteyden (https) ja WebAssembly-tuen selaimelta."
         }
     };
     const languages = Object.keys(translations);

@@ -1,4 +1,4 @@
-const { getIdFromHash, classifyId, formatParts, safeFileName, buildObsidianNewUrl, buildDownloadHref, formatExpires } = LappuViewer;
+const { parseHash, getIdFromHash, classifyId, decrypt, cryptoAvailable, formatParts, safeFileName, buildObsidianNewUrl, buildDownloadHref, formatExpires } = LappuViewer;
 const LANGUAGE_STORAGE_KEY = "lappu-language";
 
 let md = markdownit({
@@ -52,6 +52,9 @@ let currentMessage = null;
 // the last loaded note footer data, so it can be re-rendered on language change
 let currentFooter = null;
 
+// bumped on every display() so that late responses of an abandoned note are ignored
+let displayGeneration = 0;
+
 $("#language-select").on("click", "button", e => setLanguage(e.currentTarget.dataset.lang));
 applyLanguage();
 
@@ -64,6 +67,7 @@ $(window).on("hashchange", e => {
 display();
 
 function display() {
+    let generation = ++displayGeneration;
     showMessage({ key: "loading" });
     clearNoteFooter();
     let id = getId();
@@ -72,57 +76,105 @@ function display() {
         showMessage({ key: "notFound", params: { id }, homeLink: true });
         return;
     }
-    $.ajax({
-        method: "get",
-        url: kind === "valid" ? `share.php?id=${encodeURIComponent(id)}` : "index.md",
-        dataType: "text",
-        success: t => {
-            currentMessage = null;
-            // assigned via innerHTML (not jQuery .html()) so that nothing that slipped through sanitizing runs as a script
-            main[0].innerHTML = DOMPurify.sanitize(md.render(t));
-
-            $(() => {
-                // change title
-                let firstHeading = $("h1, h2, h3, h4, h5, h6").first();
-                if (firstHeading) {
-                    let heading = firstHeading.text().trim();
-                    if (heading.endsWith("#"))
-                        heading = heading.substring(0, heading.length - 1).trimEnd();
-                    window.document.title = heading;
-                }
-
-                // scroll to anchor (looked up by id rather than as a jQuery selector, so the hash is never parsed as a selector)
-                let element = findHashTarget();
-                if (element)
-                    $(window).scrollTop($(element).offset().top);
-
-                // set download links
-                download.attr("download", `${safeFileName(window.document.title)}.md`);
-                download.attr("href", buildDownloadHref(t));
-                open.attr("href", buildObsidianNewUrl(window.document.title, t));
-
-                // load note footer with publication time (only for shared notes)
-                if (kind === "valid") {
-                    loadNoteFooter(id);
-                }
-            });
-        },
-        error: (r, s, e) => {
-            if (r.status === 404)
-                showMessage({ key: "notFound", params: { id }, homeLink: true });
+    let fail = (r, s, e) => {
+        if (generation !== displayGeneration)
+            return;
+        if (r.status === 404)
+            showMessage({ key: "notFound", params: { id }, homeLink: true });
+        else
+            showMessage({ key: "errorLoading", params: { id, details: `${s} ${e}` }, homeLink: true });
+    };
+    if (kind !== "valid") {
+        $.ajax({ method: "get", url: "index.md", dataType: "text" })
+            .then(t => generation === displayGeneration && renderNote(t, id, kind, null), (r, s, e) => fail(r, s, e));
+        return;
+    }
+    // The meta tells whether the note is encrypted; a failing meta request falls back to a plain note.
+    let metaRequest = $.ajax({ method: "get", url: `share.php?meta&id=${encodeURIComponent(id)}`, dataType: "json" })
+        .then(m => m, () => null);
+    $.ajax({ method: "get", url: `share.php?id=${encodeURIComponent(id)}`, dataType: "text" })
+        .then(t => metaRequest.then(meta => {
+            if (generation !== displayGeneration)
+                return;
+            if (meta && meta.encrypted === true)
+                openEncrypted(t, id, meta, generation);
             else
-                showMessage({ key: "errorLoading", params: { id, details: `${s} ${e}` }, homeLink: true });
+                renderNote(t, id, kind, meta);
+        }), (r, s, e) => fail(r, s, e));
+}
+
+// Asks for the password (or tries the one in the link) and renders the note when it decrypts.
+// The decrypted text only lives in this function's closure and in the rendered note.
+async function openEncrypted(ciphertext, id, meta, generation) {
+    if (!cryptoAvailable()) {
+        showMessage({ key: "cryptoUnavailable", homeLink: true });
+        return;
+    }
+    let attempt = async password => {
+        showMessage({ key: "decrypting" });
+        // let the browser paint the busy message before Argon2 blocks the main thread
+        await new Promise(resolve => setTimeout(resolve, 50));
+        if (generation !== displayGeneration)
+            return;
+        try {
+            let text = await decrypt(password, ciphertext);
+            if (generation === displayGeneration)
+                renderNote(text, id, "valid", meta);
+        } catch (e) {
+            if (generation !== displayGeneration)
+                return;
+            if (e && e.code === "decrypt-failed" || e && e.code === "empty-password")
+                showPasswordForm(attempt, "wrongPassword");
+            else if (e && e.code === "invalid-format")
+                showMessage({ key: "invalidEncrypted", homeLink: true });
+            else
+                showMessage({ key: "cryptoUnavailable", homeLink: true });
         }
+    };
+    let key = parseHash(window.location.hash).key;
+    if (key)
+        await attempt(key);
+    else
+        showPasswordForm(attempt, null);
+}
+
+function showPasswordForm(attempt, errorKey) {
+    showMessage({ key: "encryptedNote", form: { attempt, errorKey } });
+}
+
+function renderNote(t, id, kind, meta) {
+    currentMessage = null;
+    // assigned via innerHTML (not jQuery .html()) so that nothing that slipped through sanitizing runs as a script
+    main[0].innerHTML = DOMPurify.sanitize(md.render(t));
+
+    $(() => {
+        // change title
+        let firstHeading = $("h1, h2, h3, h4, h5, h6").first();
+        if (firstHeading) {
+            let heading = firstHeading.text().trim();
+            if (heading.endsWith("#"))
+                heading = heading.substring(0, heading.length - 1).trimEnd();
+            window.document.title = heading;
+        }
+
+        // scroll to anchor (looked up by id rather than as a jQuery selector, so the hash is never parsed as a selector)
+        let element = findHashTarget();
+        if (element)
+            $(window).scrollTop($(element).offset().top);
+
+        // set download links
+        download.attr("download", `${safeFileName(window.document.title)}.md`);
+        download.attr("href", buildDownloadHref(t));
+        open.attr("href", buildObsidianNewUrl(window.document.title, t));
+
+        // load note footer with publication time (only for shared notes)
+        if (kind === "valid")
+            loadNoteFooter(id, meta);
     });
 }
 
-function loadNoteFooter(id) {
-    let encodedId = encodeURIComponent(id);
-    // Fetch meta and quote in parallel
-    Promise.all([
-        $.ajax({ method: "get", url: `share.php?meta&id=${encodedId}`, dataType: "json" }).catch(() => null),
-        $.ajax({ method: "get", url: "share.php?quote", dataType: "json" }).catch(() => null)
-    ]).then(([meta, quote]) => {
+function loadNoteFooter(id, meta) {
+    $.ajax({ method: "get", url: "share.php?quote", dataType: "json" }).catch(() => null).then(quote => {
         // ignore the result if another note was opened in the meantime
         if (getId() !== id)
             return;
@@ -185,9 +237,28 @@ function renderMessage() {
         return;
     let p = $("<p>").append(buildNodes(t(currentMessage.key), currentMessage.params || {}, value => $("<code>").text(value)));
     let box = $("<div>").addClass("center-message").append(p);
+    if (currentMessage.form)
+        box.append(buildPasswordForm(currentMessage.form));
     if (currentMessage.homeLink)
         box.append($("<p>").append($("<a>").attr("href", "#").text(t("home"))));
     main.empty().append(box);
+}
+
+// The password only ever goes from the input to the decrypt function in the browser.
+function buildPasswordForm({ attempt, errorKey }) {
+    let input = $("<input>").attr({ type: "password", autocomplete: "off", "aria-label": t("password"), placeholder: t("password") });
+    let form = $("<form>").addClass("password-form").append(input, $("<button>").attr("type", "submit").text(t("openNote")));
+    form.on("submit", e => {
+        e.preventDefault();
+        let password = String(input.val());
+        input.val("");
+        attempt(password);
+    });
+    let box = $("<div>").append(form);
+    if (errorKey)
+        box.append($("<p>").addClass("password-error").attr("role", "alert").text(t(errorKey)));
+    setTimeout(() => input[0] && input[0].focus(), 0);
+    return box;
 }
 
 // Turns a translated template into DOM nodes; text is always inserted as text nodes.
@@ -239,10 +310,11 @@ function t(key) {
 }
 
 function findHashTarget() {
-    let hash = window.location.hash;
-    if (!hash || hash.length < 2)
+    // element ids are "<note id>-<slug>"; the optional "~key" part of the hash is not part of them
+    let { id, anchor } = parseHash(window.location.hash);
+    if (id === undefined || id === "" && anchor === null)
         return null;
-    let target = hash.substring(1);
+    let target = anchor === null ? id : `${id}-${anchor}`;
     try {
         target = decodeURIComponent(target);
     } catch (e) {

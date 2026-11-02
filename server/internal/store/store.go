@@ -25,7 +25,12 @@ var (
 	ErrNotFound     = errors.New("not found")
 	ErrUnauthorized = errors.New("unauthorized")
 	ErrInvalidID    = errors.New("invalid id")
+	// ErrNotCiphertext is returned when an encrypted share's content is empty or
+	// is not base64 text, which would mean a client leaks plaintext.
+	ErrNotCiphertext = errors.New("encrypted content must be non-empty base64 text")
 )
+
+var ciphertextPattern = regexp.MustCompile(`^[A-Za-z0-9+/=\s]+$`)
 
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9]{8,64}$`)
 
@@ -50,10 +55,11 @@ type Meta struct {
 
 // Share is returned once on creation; Password is never stored in plaintext.
 type Share struct {
-	ID       string `json:"id"`
-	Password string `json:"password"`
-	Created  int64  `json:"created"`
-	Expires  *int64 `json:"expires"` // unix seconds, null = never
+	ID        string `json:"id"`
+	Password  string `json:"password"`
+	Created   int64  `json:"created"`
+	Expires   *int64 `json:"expires"` // unix seconds, null = never
+	Encrypted bool   `json:"encrypted"`
 }
 
 // MaxExpiresIn is the longest allowed lifetime of a share, in seconds (365 days).
@@ -136,6 +142,15 @@ func (s *Store) readMeta(id string) (Meta, error) {
 // Create stores a new share. expiresIn is the lifetime in seconds (validated
 // by the caller against MaxExpiresIn); 0 means it never expires.
 func (s *Store) Create(content string, expiresIn int64) (Share, error) {
+	return s.CreateWith(content, expiresIn, false)
+}
+
+// CreateWith is Create with the encrypted flag. The server never decrypts: for
+// an encrypted share it only checks that content looks like base64 text.
+func (s *Store) CreateWith(content string, expiresIn int64, encrypted bool) (Share, error) {
+	if encrypted && !ciphertextPattern.MatchString(content) {
+		return Share{}, ErrNotCiphertext
+	}
 	password := randomHex(16)
 	for {
 		id := randomHex(12)
@@ -148,7 +163,7 @@ func (s *Store) Create(content string, expiresIn int64) (Share, error) {
 			continue // collision, practically impossible
 		}
 		now := s.now().Unix()
-		m := Meta{ID: id, PasswordSHA256: hashPassword(password), Created: now, Updated: now}
+		m := Meta{ID: id, PasswordSHA256: hashPassword(password), Created: now, Updated: now, Encrypted: encrypted}
 		if expiresIn > 0 {
 			exp := now + expiresIn
 			m.Expires = &exp
@@ -161,11 +176,17 @@ func (s *Store) Create(content string, expiresIn int64) (Share, error) {
 		if err != nil {
 			return Share{}, err
 		}
-		return Share{ID: id, Password: password, Created: now, Expires: m.Expires}, nil
+		return Share{ID: id, Password: password, Created: now, Expires: m.Expires, Encrypted: encrypted}, nil
 	}
 }
 
 func (s *Store) Update(id, password, content string) error {
+	return s.UpdateWith(id, password, content, nil)
+}
+
+// UpdateWith is Update with an optional encrypted flag; nil leaves it unchanged.
+// The content is checked against the resulting flag.
+func (s *Store) UpdateWith(id, password, content string, encrypted *bool) error {
 	if !ValidID(id) {
 		return ErrInvalidID
 	}
@@ -173,6 +194,12 @@ func (s *Store) Update(id, password, content string) error {
 	m, err := s.authorize(id, password)
 	if err != nil {
 		return err
+	}
+	if encrypted != nil {
+		m.Encrypted = *encrypted
+	}
+	if m.Encrypted && !ciphertextPattern.MatchString(content) {
+		return ErrNotCiphertext
 	}
 	if err := s.writeContent(id, content); err != nil {
 		return err

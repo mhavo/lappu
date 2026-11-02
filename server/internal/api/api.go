@@ -32,7 +32,7 @@ const (
 // viewerCSP limits jsDelivr to npm packages and the highlight.js repo
 // (not arbitrary GitHub repos via /gh/).
 const viewerCSP = "default-src 'none'; " +
-	"script-src 'self' https://cdn.jsdelivr.net/npm/ https://cdn.jsdelivr.net/gh/highlightjs/; " +
+	"script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net/npm/ https://cdn.jsdelivr.net/gh/highlightjs/; " +
 	"style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net/npm/ https://cdn.jsdelivr.net/gh/highlightjs/ https://fonts.googleapis.com; " +
 	"font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net/npm/; " +
 	"img-src 'self' data: https:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
@@ -159,10 +159,11 @@ func (s *server) meta(w http.ResponseWriter, id string) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Internal error"})
 	default:
 		writeJSON(w, http.StatusOK, struct {
-			ID      string `json:"id"`
-			Created int64  `json:"created"`
-			Expires *int64 `json:"expires"`
-		}{m.ID, m.Created, m.Expires})
+			ID        string `json:"id"`
+			Created   int64  `json:"created"`
+			Expires   *int64 `json:"expires"`
+			Encrypted bool   `json:"encrypted"`
+		}{m.ID, m.Created, m.Expires, m.Encrypted})
 	}
 }
 
@@ -248,10 +249,16 @@ func (s *server) write(w http.ResponseWriter, r *http.Request) {
 
 	var content string
 	var expiresIn int64
+	var encrypted *bool
 	if r.Method != http.MethodDelete {
 		var raw json.RawMessage
 		var ok bool
-		if content, raw, ok = s.readContent(w, r); !ok {
+		var rawEnc json.RawMessage
+		if content, raw, rawEnc, ok = s.readContent(w, r); !ok {
+			return
+		}
+		if encrypted, ok = parseEncrypted(rawEnc); !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid encrypted"})
 			return
 		}
 		// Expiry is only set on creation; PATCH ignores it entirely.
@@ -267,7 +274,7 @@ func (s *server) write(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 		var share store.Share
-		if share, err = s.Store.Create(content, expiresIn); err == nil {
+		if share, err = s.Store.CreateWith(content, expiresIn, encrypted != nil && *encrypted); err == nil {
 			if !trusted {
 				s.creates.charge(ip)
 			}
@@ -275,12 +282,16 @@ func (s *server) write(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case http.MethodPatch:
-		err = s.Store.Update(id, password, content)
+		err = s.Store.UpdateWith(id, password, content, encrypted)
 	case http.MethodDelete:
 		err = s.Store.Delete(id, password)
 	}
 	if errors.Is(err, store.ErrUnauthorized) && !trusted {
 		s.limiter.charge(ip)
+	}
+	if errors.Is(err, store.ErrNotCiphertext) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
 	}
 	if err != nil {
 		s.storeError(w, err)
@@ -313,23 +324,37 @@ func parseExpiresIn(raw json.RawMessage) (int64, bool) {
 	return n, true
 }
 
+// parseEncrypted accepts an absent field (nil: unchanged / false) or a JSON
+// boolean; null and every other type are rejected.
+func parseEncrypted(raw json.RawMessage) (*bool, bool) {
+	if len(raw) == 0 {
+		return nil, true
+	}
+	var b bool
+	if err := json.Unmarshal(raw, &b); err != nil || string(raw) == "null" {
+		return nil, false
+	}
+	return &b, true
+}
+
 // readContent decodes the request body; expiresIn is returned raw for the
 // caller to validate (only POST uses it).
-func (s *server) readContent(w http.ResponseWriter, r *http.Request) (string, json.RawMessage, bool) {
+func (s *server) readContent(w http.ResponseWriter, r *http.Request) (string, json.RawMessage, json.RawMessage, bool) {
 	var body struct {
 		Content   *string         `json:"content"`
 		ExpiresIn json.RawMessage `json:"expiresIn"`
+		Encrypted json.RawMessage `json:"encrypted"`
 	}
 	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, s.MaxBodyBytes)).Decode(&body)
 	if _, tooLarge := errors.AsType[*http.MaxBytesError](err); tooLarge {
 		text(w, http.StatusRequestEntityTooLarge, "Request too large")
-		return "", nil, false
+		return "", nil, nil, false
 	}
 	if err != nil || body.Content == nil {
 		text(w, http.StatusBadRequest, "No content")
-		return "", nil, false
+		return "", nil, nil, false
 	}
-	return *body.Content, body.ExpiresIn, true
+	return *body.Content, body.ExpiresIn, body.Encrypted, true
 }
 
 func (s *server) storeError(w http.ResponseWriter, err error) {

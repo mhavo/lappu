@@ -192,3 +192,25 @@ input[type=checkbox]:checked:after {
         position: relative;
     }
 }
+
+.password-form {
+    display: flex;
+    gap: 0.5em;
+    justify-content: center;
+    margin-top: 1em;
+}
+
+.password-form input {
+    font: inherit;
+    padding: 0.4em 0.6em;
+}
+
+.password-form button {
+    font: inherit;
+    padding: 0.4em 1em;
+    cursor: pointer;
+}
+
+.password-error {
+    color: #c0392b;
+}

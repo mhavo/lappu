@@ -141,7 +141,7 @@ func TestMeta(t *testing.T) {
 	}
 	var m map[string]any
 	json.Unmarshal(w.Body.Bytes(), &m)
-	if m["id"] != s.ID || m["created"] != float64(s.Created) || len(m) != 3 || m["expires"] != nil {
+	if m["id"] != s.ID || m["created"] != float64(s.Created) || len(m) != 4 || m["expires"] != nil || m["encrypted"] != false {
 		t.Errorf("meta = %v", m)
 	}
 	expectJSON := func(target string, code int, body string) {
@@ -212,7 +212,7 @@ func TestLegacyPHPShare(t *testing.T) {
 	target := "/share.php?id=" + id
 
 	expect(t, e.do(req{method: "GET", target: target}), 200, "# legacy")
-	expect(t, e.do(req{method: "GET", target: "/share.php?meta&id=" + id}), 200, `{"id":"a1b2c3d4","created":1729500000,"expires":null}`)
+	expect(t, e.do(req{method: "GET", target: "/share.php?meta&id=" + id}), 200, `{"id":"a1b2c3d4","created":1729500000,"expires":null,"encrypted":false}`)
 	expect(t, e.do(req{method: "PATCH", target: target, body: `{"content":"# updated"}`, header: auth("Password", pw)}), 200, "")
 	expect(t, e.do(req{method: "GET", target: target}), 200, "# updated")
 
@@ -259,7 +259,7 @@ func TestHealthz(t *testing.T) {
 	expect(t, e.do(req{method: "GET", target: "/healthz"}), 200, "ok")
 }
 
-const wantCSP = "default-src 'none'; script-src 'self' https://cdn.jsdelivr.net/npm/ https://cdn.jsdelivr.net/gh/highlightjs/; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net/npm/ https://cdn.jsdelivr.net/gh/highlightjs/ https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net/npm/; img-src 'self' data: https:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+const wantCSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net/npm/ https://cdn.jsdelivr.net/gh/highlightjs/; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net/npm/ https://cdn.jsdelivr.net/gh/highlightjs/ https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net/npm/; img-src 'self' data: https:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
 func TestStaticFiles(t *testing.T) {
 	e := newEnv(t)
@@ -449,5 +449,83 @@ func TestPatchIgnoresExpiresIn(t *testing.T) {
 	m, _ := e.store.Meta(s.ID)
 	if m.Expires == nil || *m.Expires != now+60 {
 		t.Errorf("expires = %v", m.Expires)
+	}
+}
+
+func (e *env) patch(id, pw, body string) *httptest.ResponseRecorder {
+	e.t.Helper()
+	return e.do(req{method: "PATCH", target: "/share.php?id=" + id, body: body, header: auth("Password", pw)})
+}
+
+func (e *env) metaOf(id string) map[string]any {
+	e.t.Helper()
+	var m map[string]any
+	json.Unmarshal(e.do(req{method: "GET", target: "/share.php?meta&id=" + id}).Body.Bytes(), &m)
+	return m
+}
+
+func TestEncryptedShare(t *testing.T) {
+	e := newEnv(t)
+	const ct = "AAECAwQFBgcICQoL\ntI+IL8VaAdnNEogID0axa9mnQVF7OBA2siggzwcsWw==\n"
+
+	// default: not encrypted, and the POST response says so
+	var plain map[string]any
+	json.Unmarshal(e.post(`{"content":"hello"}`).Body.Bytes(), &plain)
+	if v, ok := plain["encrypted"]; !ok || v != false {
+		t.Errorf("plain post response: %v", plain)
+	}
+
+	w := e.post(`{"content":` + jsonString(ct) + `,"encrypted":true}`)
+	var s map[string]any
+	json.Unmarshal(w.Body.Bytes(), &s)
+	if w.Code != 200 || s["encrypted"] != true {
+		t.Fatalf("post: %d %s", w.Code, w.Body)
+	}
+	id, pw := s["id"].(string), s["password"].(string)
+	if e.metaOf(id)["encrypted"] != true {
+		t.Error("meta not encrypted")
+	}
+	expect(t, e.do(req{method: "GET", target: "/share.php?id=" + id}), 200, ct)
+
+	// absent keeps the flag, content is still checked
+	expect(t, e.patch(id, pw, `{"content":"plaintext!"}`), 400, `{"error":"encrypted content must be non-empty base64 text"}`)
+	if w := e.patch(id, pw, `{"content":"QUJD"}`); w.Code != 200 || e.metaOf(id)["encrypted"] != true {
+		t.Errorf("patch keep: %d %v", w.Code, e.metaOf(id))
+	}
+	// explicit false turns it off
+	if w := e.patch(id, pw, `{"content":"# plain","encrypted":false}`); w.Code != 200 || e.metaOf(id)["encrypted"] != false {
+		t.Errorf("patch off: %d %v", w.Code, e.metaOf(id))
+	}
+	// and back on, with plaintext content rejected and nothing changed
+	if w := e.patch(id, pw, `{"content":"# plain","encrypted":true}`); w.Code != 400 {
+		t.Errorf("patch on with plaintext: %d", w.Code)
+	}
+	expect(t, e.do(req{method: "GET", target: "/share.php?id=" + id}), 200, "# plain")
+	if e.metaOf(id)["encrypted"] != false {
+		t.Error("rejected patch changed the flag")
+	}
+}
+
+func TestEncryptedRejections(t *testing.T) {
+	e := newEnv(t)
+	for _, body := range []string{
+		`{"content":"","encrypted":true}`,
+		`{"content":"# hi there","encrypted":true}`,
+		`{"content":"abc-def","encrypted":true}`,
+	} {
+		w := e.post(body)
+		if w.Code != 400 || !strings.Contains(w.Body.String(), `"error"`) {
+			t.Errorf("%s: %d %s", body, w.Code, w.Body)
+		}
+	}
+	for _, v := range []string{`"yes"`, `1`, `null`, `[]`} {
+		w := e.post(`{"content":"QUJD","encrypted":` + v + `}`)
+		if w.Code != 400 || w.Header().Get("Content-Type") != "application/json" {
+			t.Errorf("encrypted %s: %d %s", v, w.Code, w.Body)
+		}
+	}
+	s := e.create("x")
+	if w := e.patch(s.ID, s.Password, `{"content":"x","encrypted":"no"}`); w.Code != 400 {
+		t.Errorf("patch non-bool: %d", w.Code)
 	}
 }

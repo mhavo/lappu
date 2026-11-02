@@ -14,7 +14,7 @@ func TestPublicContainsViewer(t *testing.T) {
 	}
 }
 
-// The server hides the viewer footer by rewriting the single <body> tag of index.html.
+// The server passes the viewer settings (hidden footer, source link) by rewriting the single <body> tag of index.html.
 func TestPublicIndexHasOneBodyTag(t *testing.T) {
 	b, err := fs.ReadFile(Public(), "index.html")
 	if err != nil {

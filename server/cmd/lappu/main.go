@@ -50,6 +50,7 @@ func run(logger *slog.Logger) error {
 			QuotesFile:     cfg.QuotesFile,
 			Static:         lappu.Public(),
 			HideFooter:     cfg.HideViewerFooter,
+			SourceURL:      cfg.SourceURL,
 			Logger:         logger,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,

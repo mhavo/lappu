@@ -32,24 +32,42 @@
 <body>
     <div class="content">
         <div id="attachment-status" role="status"></div>
-        <div id="note-tools" hidden>
+        <div id="note-tools" class="note-tools" hidden>
             <span class="split-button">
-                <button type="button" id="copy-note"><span class="copy-icon" aria-hidden="true">⧉</span> <span id="copy-note-label"></span></button><button type="button" id="copy-more" class="caret" aria-haspopup="menu" aria-expanded="false" aria-controls="copy-menu"><span aria-hidden="true">▾</span></button>
+                <button type="button" class="copy-note"><span class="copy-icon" aria-hidden="true">⧉</span> <span class="copy-note-label"></span></button><button type="button" class="copy-more caret" aria-haspopup="menu" aria-expanded="false" aria-controls="copy-menu"><span aria-hidden="true">▾</span></button>
             </span>
-            <div id="copy-menu" role="menu" hidden>
-                <button type="button" role="menuitem" data-format="markdown" id="copy-as-markdown"></button>
-                <button type="button" role="menuitem" data-format="plain" id="copy-as-plain"></button>
-                <button type="button" role="menuitem" data-format="html" id="copy-as-html"></button>
+            <div id="copy-menu" class="copy-menu" role="menu" hidden>
+                <button type="button" role="menuitem" data-format="markdown" class="copy-as-markdown"></button>
+                <button type="button" role="menuitem" data-format="plain" class="copy-as-plain"></button>
+                <button type="button" role="menuitem" data-format="html" class="copy-as-html"></button>
                 <div class="menu-separator" role="separator"></div>
-                <button type="button" role="menuitem" data-action="obsidian-new" id="add-to-obsidian"></button>
-                <button type="button" role="menuitem" data-action="obsidian-daily" id="add-to-daily-note"></button>
+                <button type="button" role="menuitem" data-action="obsidian-new" class="add-to-obsidian"></button>
+                <button type="button" role="menuitem" data-action="obsidian-daily" class="add-to-daily-note"></button>
+                <button type="button" role="menuitem" data-action="download" class="download-markdown"></button>
             </div>
         </div>
         <div id="main"></div>
-        <div id="note-footer"></div>
+        <div id="note-end" hidden>
+            <div class="note-end-ornament" aria-hidden="true">· · ·</div>
+            <div id="note-footer"></div>
+            <div id="note-tools-bottom" class="note-tools at-bottom">
+                <span class="split-button">
+                    <button type="button" class="copy-note"><span class="copy-icon" aria-hidden="true">⧉</span> <span class="copy-note-label"></span></button><button type="button" class="copy-more caret" aria-haspopup="menu" aria-expanded="false" aria-controls="copy-menu-bottom"><span aria-hidden="true">▾</span></button>
+                </span>
+                <div id="copy-menu-bottom" class="copy-menu" role="menu" hidden>
+                    <button type="button" role="menuitem" data-format="markdown" class="copy-as-markdown"></button>
+                    <button type="button" role="menuitem" data-format="plain" class="copy-as-plain"></button>
+                    <button type="button" role="menuitem" data-format="html" class="copy-as-html"></button>
+                    <div class="menu-separator" role="separator"></div>
+                    <button type="button" role="menuitem" data-action="obsidian-new" class="add-to-obsidian"></button>
+                    <button type="button" role="menuitem" data-action="obsidian-daily" class="add-to-daily-note"></button>
+                    <button type="button" role="menuitem" data-action="download" class="download-markdown"></button>
+                </div>
+            </div>
+        </div>
         <div id="copy-status" role="status"></div>
         <div id="footer">
-            <span id="footer-credit"></span> – <a href="#" id="download-markdown"></a> – <a href="#" id="open-in-obsidian"></a> – <span id="language-select" role="group"><button type="button" data-lang="fi" lang="fi">FI</button> / <button type="button" data-lang="en" lang="en">EN</button></span>
+            <span id="language-select" role="group"><button type="button" data-lang="fi" lang="fi">FI</button> / <button type="button" data-lang="en" lang="en">EN</button></span> · <span id="app-name">Lappu</span>
         </div>
         <script src="viewer-lib.js"></script>
         <script src="i18n.js"></script>

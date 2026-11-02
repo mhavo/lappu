@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -50,10 +51,13 @@ type Config struct {
 	TrustedProxies []netip.Prefix
 	QuotesFile     string
 	Static         fs.FS
-	// HideFooter hides the viewer's bottom line (credit, download, copy to
-	// Obsidian, language switch) by serving index.html with a body class.
+	// HideFooter hides the viewer's bottom line (language switch and app name)
+	// by serving index.html with a body class.
 	HideFooter bool
-	Logger     *slog.Logger
+	// SourceURL, when set, makes the app name in the viewer's bottom line a link
+	// to it (an absolute http(s) URL, validated by the caller).
+	SourceURL string
+	Logger    *slog.Logger
 }
 
 type server struct {
@@ -79,7 +83,7 @@ func New(cfg Config) http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		text(w, http.StatusOK, "ok")
 	})
-	mux.Handle("/", static(cfg.Static, cfg.HideFooter))
+	mux.Handle("/", static(cfg.Static, cfg.HideFooter, cfg.SourceURL))
 	return s.logRequests(securityHeaders(mux))
 }
 
@@ -98,26 +102,34 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// bodyMarker is replaced in index.html to hide the viewer footer.
+// bodyMarker is replaced in index.html to pass the viewer settings.
 const bodyMarker = "<body>"
 
-// static serves the viewer files. With hideFooter, "/" is served from a copy of
-// index.html whose <body> carries the no-footer class; "/index.html" is still
-// redirected to "/" by the file server, so both paths get the same page.
+// static serves the viewer files. With hideFooter or a sourceURL, "/" is served
+// from a copy of index.html whose <body> carries the no-footer class and/or a
+// data-source-url attribute; "/index.html" is still redirected to "/" by the
+// file server, so both paths get the same page.
 // It panics if index.html cannot be read or does not contain exactly one <body>,
-// so a changed viewer never silently shows the footer.
-func static(fsys fs.FS, hideFooter bool) http.Handler {
+// so a changed viewer never silently ignores the settings.
+func static(fsys fs.FS, hideFooter bool, sourceURL string) http.Handler {
 	files := http.FileServerFS(fsys)
 	var index []byte
-	if hideFooter {
+	if hideFooter || sourceURL != "" {
 		b, err := fs.ReadFile(fsys, "index.html")
 		if err != nil {
-			panic("hide footer: " + err.Error())
+			panic("viewer settings: " + err.Error())
 		}
 		if n := bytes.Count(b, []byte(bodyMarker)); n != 1 {
-			panic(fmt.Sprintf("hide footer: index.html has %d %s tags, want exactly 1", n, bodyMarker))
+			panic(fmt.Sprintf("viewer settings: index.html has %d %s tags, want exactly 1", n, bodyMarker))
 		}
-		index = bytes.Replace(b, []byte(bodyMarker), []byte(`<body class="no-footer">`), 1)
+		body := "<body"
+		if hideFooter {
+			body += ` class="no-footer"`
+		}
+		if sourceURL != "" {
+			body += ` data-source-url="` + html.EscapeString(sourceURL) + `"`
+		}
+		index = bytes.Replace(b, []byte(bodyMarker), []byte(body+">"), 1)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {

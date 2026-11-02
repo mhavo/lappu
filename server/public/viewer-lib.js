@@ -156,15 +156,18 @@
         return `data:text/plain;charset=utf-8,${encodeURIComponent(content)}`;
     }
 
-    // Formats unix seconds as a date and time (no seconds) in the given language,
-    // or null when the value is not a valid time.
-    function formatTimestamp(seconds, lang) {
+    function dateFromSeconds(seconds) {
         if (typeof seconds !== "number" || !Number.isFinite(seconds))
             return null;
         const date = new Date(seconds * 1000);
-        if (Number.isNaN(date.getTime()))
-            return null;
-        return date.toLocaleString(lang, {
+        return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    // Formats unix seconds as a date and time (no seconds) in the given language,
+    // or null when the value is not a valid time.
+    function formatTimestamp(seconds, lang) {
+        const date = dateFromSeconds(seconds);
+        return date && date.toLocaleString(lang, {
             day: "numeric",
             month: "numeric",
             year: "numeric",
@@ -173,10 +176,22 @@
         });
     }
 
-    // The expiry of a share as a localized date and time, or null when the meta
-    // has no (valid) expiry. `expires` is unix seconds.
-    function formatExpires(expires, lang) {
-        return formatTimestamp(expires, lang);
+    // Formats unix seconds as a date without the time, or null like formatTimestamp.
+    function formatDate(seconds, lang) {
+        const date = dateFromSeconds(seconds);
+        return date && date.toLocaleDateString(lang, { day: "numeric", month: "numeric", year: "numeric" });
+    }
+
+    // The source code link set by the server (data-source-url), or null unless it is an absolute http(s) URL.
+    function sourceLink(value) {
+        if (typeof value !== "string" || value === "")
+            return null;
+        try {
+            const url = new URL(value);
+            return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+        } catch (e) {
+            return null;
+        }
     }
 
     // ---- SimpleTextCrypt 5.x decryption (see simplecrypter/src/crypter.ts) ----
@@ -359,7 +374,7 @@
 
     const api = {
         ID_PATTERN, parseHash, getIdFromHash, classifyId, escapeHtml, formatParts,
-        safeFileName, buildObsidianNewUrl, buildObsidianDailyUrl, shareLink, noteMetadata, buildDownloadHref, pageTitle, formatTimestamp, formatExpires,
+        safeFileName, buildObsidianNewUrl, buildObsidianDailyUrl, shareLink, noteMetadata, buildDownloadHref, pageTitle, formatTimestamp, formatDate, sourceLink,
         CrypterError, decodeMessage, deriveKey, decrypt, decryptBytes, cryptoAvailable,
         ATTACHMENT_PATTERN, ATTACHMENT_PLACEHOLDER, isAttachmentName, attachmentMime, attachmentUrl, rewriteAttachmentSrc,
         markdownForCopy, copyableUrl

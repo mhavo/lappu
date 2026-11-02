@@ -38,7 +38,7 @@ Then open the plugin settings and set:
 
 To share a note, use *Share as Lappu* in the file menu or *Share current file as Lappu* in the command palette. The link is copied to the clipboard. The *Lappu* view lists your shares and lets you copy, update or delete them.
 
-In the viewer, the *Copy* menu copies the note as Markdown, plain text or HTML. *Add to Obsidian* creates a new note from it, and *Add to daily note* appends a `- [title](link)` line to today's daily note (needs the Daily notes core plugin). The page also carries metadata for [Obsidian Web Clipper](https://obsidian.md/clipper) templates: `{{title}}`, `{{description}}`, `{{site}}`, `{{published}}`, and the expiry as `{{meta:property:article:expiration_time}}` or `{{schema:@Article:expires}}`. Encrypted notes only expose their dates and the link without the password.
+In the viewer, the *Copy* button above and below the note copies it as Markdown, plain text or HTML. Its menu also has *Add to Obsidian*, which creates a new note from it, *Add to daily note*, which appends a `- [title](link)` line to today's daily note (needs the Daily notes core plugin), and *Download .md*. The share and expiry dates are shown under the note's title. The page also carries metadata for [Obsidian Web Clipper](https://obsidian.md/clipper) templates: `{{title}}`, `{{description}}`, `{{site}}`, `{{published}}`, and the expiry as `{{meta:property:article:expiration_time}}` or `{{schema:@Article:expires}}`. Encrypted notes only expose their dates and the link without the password.
 
 ## Self-hosting
 
@@ -70,7 +70,8 @@ The server listens on `127.0.0.1:8080`. Put a reverse proxy with TLS (for exampl
 | `LAPPU_MAX_BODY_BYTES` | `20971520` (20 MiB) | Maximum request body size for the note itself. Images are uploaded separately as attachments (older plugins embed them as base64, hence the generous default). |
 | `LAPPU_MAX_ATTACHMENT_BYTES` | `10485760` (10 MiB) | Maximum size of one attachment file (uploaded separately from the note). |
 | `LAPPU_MAX_SHARE_ATTACHMENT_BYTES` | `52428800` (50 MiB) | Maximum total size of the attachments of one share. |
-| `LAPPU_HIDE_VIEWER_FOOTER` | `false` | `true` hides the viewer's bottom line (credit, Download Markdown, Copy to Obsidian, FI / EN language switch). The note's own footer (publication time, quote) stays. |
+| `LAPPU_HIDE_VIEWER_FOOTER` | `false` | `true` hides the viewer's bottom line (FI / EN language switch and the app name). The dates, the quote and the copy buttons stay. |
+| `LAPPU_SOURCE_URL` | | An absolute http(s) URL, for example `https://github.com/mhavo/lappu`. When set, the app name in the viewer's bottom line links to it. |
 | `LAPPU_TRUSTED_PROXIES` | `127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7` | Comma-separated CIDRs or IPs whose `X-Forwarded-For` header is trusted for the client IP (rate limiting and logs). |
 
 The server refuses to start if no token is set and `LAPPU_ALLOW_ANONYMOUS_UPLOADS` is not `true`, if the token is shorter than 32 characters, or if any old `JSP_*` variable (the pre-rename names) is still set.

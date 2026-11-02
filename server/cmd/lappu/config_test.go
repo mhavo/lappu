@@ -78,6 +78,8 @@ func TestConfigErrors(t *testing.T) {
 		"bad body limit":             {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_MAX_BODY_BYTES": "0"},
 		"bad attachment limit":       {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_MAX_ATTACHMENT_BYTES": "-1"},
 		"bad share attachment limit": {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_MAX_SHARE_ATTACHMENT_BYTES": "x"},
+		"bad source url":             {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_SOURCE_URL": "javascript:alert(1)"},
+		"relative source url":        {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_SOURCE_URL": "/lappu"},
 		"bad proxy":                  {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_TRUSTED_PROXIES": "nope"},
 		"short anon token":           {"LAPPU_UPLOAD_TOKEN": "short", "LAPPU_ALLOW_ANONYMOUS_UPLOADS": "true"},
 	}
@@ -137,5 +139,16 @@ func TestConfigHideViewerFooter(t *testing.T) {
 	c, err := loadConfig(envFrom(map[string]string{"LAPPU_UPLOAD_TOKEN": token, "LAPPU_HIDE_VIEWER_FOOTER": "true"}))
 	if err != nil || !c.HideViewerFooter {
 		t.Errorf("%+v %v", c, err)
+	}
+}
+
+func TestConfigSourceURL(t *testing.T) {
+	c, err := loadConfig(envFrom(map[string]string{"LAPPU_UPLOAD_TOKEN": token, "LAPPU_SOURCE_URL": " https://github.com/mhavo/lappu "}))
+	if err != nil || c.SourceURL != "https://github.com/mhavo/lappu" {
+		t.Errorf("%+v %v", c, err)
+	}
+	c, err = loadConfig(envFrom(map[string]string{"LAPPU_UPLOAD_TOKEN": token}))
+	if err != nil || c.SourceURL != "" {
+		t.Errorf("default: %+v %v", c, err)
 	}
 }

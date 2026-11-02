@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -25,6 +26,7 @@ type config struct {
 	MaxShareAttachmentBytes int64
 	TrustedProxies          []netip.Prefix
 	HideViewerFooter        bool
+	SourceURL               string
 }
 
 // envSuffixes are the configuration variables; each is read as LAPPU_<suffix>.
@@ -71,6 +73,9 @@ func loadConfig(getenv func(string) string) (config, error) {
 	}
 	if c.HideViewerFooter, err = strconv.ParseBool(get("LAPPU_HIDE_VIEWER_FOOTER", "false")); err != nil {
 		return c, fmt.Errorf("LAPPU_HIDE_VIEWER_FOOTER: %w", err)
+	}
+	if c.SourceURL, err = parseSourceURL(get("LAPPU_SOURCE_URL", "")); err != nil {
+		return c, fmt.Errorf("LAPPU_SOURCE_URL: %w", err)
 	}
 	if c.Token, err = loadToken(getenv("LAPPU_UPLOAD_TOKEN"), getenv("LAPPU_UPLOAD_TOKEN_FILE")); err != nil {
 		return c, err
@@ -131,4 +136,19 @@ func positiveInt(get func(key, def string) string, key string, def int64) (int64
 		return 0, fmt.Errorf("%s must be a positive integer", key)
 	}
 	return n, nil
+}
+
+// parseSourceURL accepts an empty value (no link) or an absolute http(s) URL.
+func parseSourceURL(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", errors.New("must be an absolute http or https URL")
+	}
+	return u.String(), nil
 }

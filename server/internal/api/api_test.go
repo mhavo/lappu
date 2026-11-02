@@ -307,6 +307,24 @@ func TestHideFooter(t *testing.T) {
 	}
 }
 
+func TestSourceURL(t *testing.T) {
+	page := fstest.MapFS{"index.html": {Data: []byte("<html><body></body></html>")}}
+	e := newEnv(t, func(c *Config) {
+		c.Static = page
+		c.SourceURL = `https://example.com/a?b=1&c="x"`
+	})
+	expect(t, e.do(req{method: "GET", target: "/"}), 200,
+		`<html><body data-source-url="https://example.com/a?b=1&amp;c=&#34;x&#34;"></body></html>`)
+
+	both := newEnv(t, func(c *Config) {
+		c.Static = page
+		c.HideFooter = true
+		c.SourceURL = "https://example.com"
+	})
+	expect(t, both.do(req{method: "GET", target: "/"}), 200,
+		`<html><body class="no-footer" data-source-url="https://example.com"></body></html>`)
+}
+
 func TestHideFooterNeedsOneBodyTag(t *testing.T) {
 	for name, html := range map[string]string{
 		"none": "<html>viewer</html>",

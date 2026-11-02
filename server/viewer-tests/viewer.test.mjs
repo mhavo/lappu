@@ -161,9 +161,16 @@ test("noteMetadata never exposes an encrypted note's content", () => {
     assert.ok(!tags.some(t => t.key === "article:expiration_time"));
 });
 
+test("sourceLink accepts only absolute http(s) URLs", () => {
+    assert.equal(lib.sourceLink("https://github.com/mhavo/lappu"), "https://github.com/mhavo/lappu");
+    assert.equal(lib.sourceLink("http://example.com"), "http://example.com/");
+    for (const value of [undefined, "", "javascript:alert(1)", "/lappu", "not a url", "data:text/html,x"])
+        assert.equal(lib.sourceLink(value), null, String(value));
+});
+
 test("menu action labels exist in every language", () => {
     for (const lang of i18n.languages)
-        for (const key of ["addToObsidian", "addToDailyNote"])
+        for (const key of ["addToObsidian", "addToDailyNote", "downloadMarkdown"])
             assert.ok(Object.prototype.hasOwnProperty.call(i18n.translations[lang], key), `${lang}.${key}`);
 });
 
@@ -177,19 +184,27 @@ test("formatTimestamp formats unix seconds in the given language without seconds
     assert.equal(lib.formatTimestamp(seconds, "fi"), new Date(seconds * 1000).toLocaleString("fi", options));
     assert.equal(lib.formatTimestamp(seconds, "en"), new Date(seconds * 1000).toLocaleString("en", options));
     assert.notEqual(lib.formatTimestamp(seconds, "fi"), lib.formatTimestamp(seconds, "en"));
-    assert.equal(lib.formatExpires(seconds, "fi"), lib.formatTimestamp(seconds, "fi"));
 });
 
-test("formatExpires returns null for a missing or invalid expiry", () => {
+test("formatDate formats unix seconds as a date without the time", () => {
+    const seconds = 1_800_000_000;
+    const options = { day: "numeric", month: "numeric", year: "numeric" };
+    assert.equal(lib.formatDate(seconds, "fi"), new Date(seconds * 1000).toLocaleDateString("fi", options));
+    assert.equal(lib.formatDate(seconds, "en"), new Date(seconds * 1000).toLocaleDateString("en", options));
+});
+
+test("formatDate and formatTimestamp return null for a missing or invalid time", () => {
     for (const value of [null, undefined, "1800000000", NaN, Infinity, 1e20])
-        assert.equal(lib.formatExpires(value, "en"), null);
+        for (const format of [lib.formatDate, lib.formatTimestamp])
+            assert.equal(format(value, "en"), null);
 });
 
 test("expires translation has a date placeholder in every language", () => {
     for (const lang of i18n.languages)
         assert.match(i18n.translate(lang, "expires"), /\{date\}/);
-    assert.equal(i18n.translate("fi", "expires"), "Vanhenee: {date}");
-    assert.equal(i18n.translate("en", "expires"), "Expires: {date}");
+    assert.equal(i18n.translate("fi", "expires"), "vanhenee {date}");
+    assert.equal(i18n.translate("en", "expires"), "expires {date}");
+    assert.equal(i18n.translate("fi", "shared"), "Jaettu {date}");
 });
 
 // ---- link format with an optional key ----

@@ -1,4 +1,4 @@
-const { parseHash, getIdFromHash, classifyId, decrypt, decryptBytes, cryptoAvailable, rewriteAttachmentSrc, attachmentUrl, attachmentMime, markdownForCopy, copyableUrl, formatParts, safeFileName, buildObsidianNewUrl, buildObsidianDailyUrl, shareLink, noteMetadata, buildDownloadHref, pageTitle, formatTimestamp, formatExpires } = LappuViewer;
+const { parseHash, getIdFromHash, classifyId, decrypt, decryptBytes, cryptoAvailable, rewriteAttachmentSrc, attachmentUrl, attachmentMime, markdownForCopy, copyableUrl, formatParts, safeFileName, buildObsidianNewUrl, buildObsidianDailyUrl, shareLink, noteMetadata, buildDownloadHref, pageTitle, formatDate, formatTimestamp, sourceLink } = LappuViewer;
 const LANGUAGE_STORAGE_KEY = "lappu-language";
 
 let md = markdownit({
@@ -59,12 +59,7 @@ md.renderer.rules.image = (tokens, idx, options, env, self) => {
 let main = $("#main");
 let attachmentStatus = $("#attachment-status");
 let noteFooter = $("#note-footer");
-let download = $("#download-markdown");
-let open = $("#open-in-obsidian");
-let noteTools = $("#note-tools");
-let copyButton = $("#copy-note");
-let copyMore = $("#copy-more");
-let copyMenu = $("#copy-menu");
+let noteEnd = $("#note-end");
 let copyStatus = $("#copy-status");
 
 // the page title of the home page and of encrypted notes
@@ -91,7 +86,9 @@ let copyStatusTimer = null;
 let displayGeneration = 0;
 
 $("#language-select").on("click", "button", e => setLanguage(e.currentTarget.dataset.lang));
-setUpCopyButton();
+// the same copy button and menu above the note and below it
+let copyTools = [$("#note-tools"), $("#note-tools-bottom")].map(setUpCopyTools);
+renderAppName();
 applyLanguage();
 
 $(window).on("hashchange", e => {
@@ -105,9 +102,7 @@ display();
 function display() {
     let generation = ++displayGeneration;
     showMessage({ key: "loading" });
-    // nothing of the previous note may linger: its text is in the download link, the Obsidian link and currentNote
-    download.removeAttr("href").removeAttr("download");
-    open.removeAttr("href");
+    // nothing of the previous note may linger: its text is in currentNote, the byline and the metadata
     window.document.title = genericTitle;
     clearNoteMetadata();
     clearNoteFooter();
@@ -146,7 +141,7 @@ function display() {
 }
 
 // Asks for the password (or tries the one in the link) and renders the note when it decrypts.
-// The decrypted text only lives in this function's closure, the rendered note and its copy/download links.
+// The decrypted text only lives in this function's closure, the rendered note and currentNote.
 async function openEncrypted(ciphertext, id, meta, generation) {
     if (!cryptoAvailable()) {
         showMessage({ key: "cryptoUnavailable", homeLink: true });
@@ -213,19 +208,13 @@ function renderNote(t, id, kind, meta, password) {
         if (element)
             $(window).scrollTop($(element).offset().top);
 
-        // set download links (with attachment references as absolute URLs, like the copy menu)
-        let noteName = heading || window.document.title;
-        let exported = markdownForCopy(t, env.attachments, window.location.href);
-        download.attr("download", `${safeFileName(noteName)}.md`);
-        download.attr("href", buildDownloadHref(exported));
-        open.attr("href", buildObsidianNewUrl(noteName, exported));
         if (currentNote)
             currentNote.title = heading;
 
         if (kind === "valid")
             setNoteMetadata(heading, encrypted, meta);
 
-        // load note footer with publication time (only for shared notes)
+        // the dates under the title and the quote below the note (only for shared notes)
         if (kind === "valid")
             loadNoteFooter(id, meta);
     });
@@ -304,10 +293,13 @@ function markImageBroken(img) {
     img.title = t("imageFailed");
 }
 
+// Shows the dates right away and the quote once it has loaded.
 function loadNoteFooter(id, meta) {
+    currentFooter = { meta, quote: null };
+    renderNoteFooter();
     $.ajax({ method: "get", url: "share.php?quote", dataType: "json" }).catch(() => null).then(quote => {
         // ignore the result if another note was opened in the meantime
-        if (getId() !== id)
+        if (getId() !== id || !currentFooter)
             return;
         currentFooter = { meta, quote };
         renderNoteFooter();
@@ -316,42 +308,44 @@ function loadNoteFooter(id, meta) {
 
 function clearNoteFooter() {
     currentFooter = null;
-    noteFooter.empty();
+    renderNoteFooter();
 }
 
 function renderNoteFooter() {
     noteFooter.empty();
+    main.find(".note-byline").remove();
     if (!currentFooter)
         return;
     let { meta, quote } = currentFooter;
-    let parts = [];
-    // shared and expiry dates share one line
+
+    // "Shared 2.11.2026 · expires 9.11.2026" under the first heading; the full time is in the tooltip
     let dates = [];
-
-    // Add timestamp if available
-    let created = formatTimestamp(meta && meta.created, language);
-    if (created)
-        dates.push(t("shared").replace("{date}", created));
-
-    // Add expiry if the share has one
-    let expires = formatExpires(meta && meta.expires, language);
-    if (expires)
-        dates.push(t("expires").replace("{date}", expires));
-
-    if (dates.length)
-        parts.push($("<p>").addClass("note-timestamp").text(dates.join(" · ")));
-
-    // Add quote if available (always inserted as text, never as HTML)
-    if (quote && quote.quote) {
-        parts.push($("<p>").addClass("note-quote").text(`"${quote.quote}"`));
-        if (quote.source) {
-            parts.push($("<p>").addClass("note-quote-source").append(document.createTextNode("— "), $("<em>").text(String(quote.source))));
-        }
+    for (let [key, seconds] of [["shared", meta && meta.created], ["expires", meta && meta.expires]]) {
+        let date = formatDate(seconds, language);
+        if (!date)
+            continue;
+        let text = t(key).replace("{date}", date);
+        // the line starts with a capital even when it only has the (lowercase) expiry
+        if (!dates.length)
+            text = text.charAt(0).toUpperCase() + text.substring(1);
+        dates.push($("<span>").attr("title", formatTimestamp(seconds, language)).text(text));
+    }
+    if (dates.length) {
+        let byline = $("<div>").addClass("note-byline");
+        dates.forEach((date, i) => byline.append(i ? " · " : "", date));
+        let first = main.children().first();
+        if (first.is("h1, h2, h3, h4, h5, h6"))
+            first.after(byline);
+        else
+            main.prepend(byline);
     }
 
-    // Only show footer if there's content
-    if (parts.length)
-        noteFooter.append($("<div>").addClass("note-footer-divider"), ...parts);
+    // quote (always inserted as text, never as HTML)
+    if (quote && quote.quote) {
+        noteFooter.append($("<p>").addClass("note-quote").text(`"${quote.quote}"`));
+        if (quote.source)
+            noteFooter.append($("<p>").addClass("note-quote-source").text(String(quote.source)));
+    }
 }
 
 // Shows a UI message in #main. Parameters are rendered as <code> text nodes.
@@ -399,20 +393,15 @@ function buildNodes(template, params, renderParam) {
 }
 
 function renderStaticStrings() {
-    $("#footer-credit").empty().append(buildNodes(t("createdUsing"), {
-        app: "Lappu",
-        obsidian: "Obsidian"
-    }, (value, name) => $("<a>").attr("href", name === "app" ? "/" : "https://obsidian.md").text(value)));
-    download.text(t("downloadMarkdown"));
-    $("#copy-note-label").text(t("copy"));
-    copyMore.attr({ "aria-label": t("copyOptions"), title: t("copyOptions") });
-    copyMenu.attr("aria-label", t("copyOptions"));
-    $("#copy-as-markdown").text(t("copyMarkdown"));
-    $("#copy-as-plain").text(t("copyPlainText"));
-    $("#copy-as-html").text(t("copyHtml"));
-    $("#add-to-obsidian").text(t("addToObsidian"));
-    $("#add-to-daily-note").text(t("addToDailyNote"));
-    open.text(t("copyToObsidian"));
+    $(".copy-note-label").text(t("copy"));
+    $(".copy-more").attr({ "aria-label": t("copyOptions"), title: t("copyOptions") });
+    $(".copy-menu").attr("aria-label", t("copyOptions"));
+    $(".copy-as-markdown").text(t("copyMarkdown"));
+    $(".copy-as-plain").text(t("copyPlainText"));
+    $(".copy-as-html").text(t("copyHtml"));
+    $(".add-to-obsidian").text(t("addToObsidian"));
+    $(".add-to-daily-note").text(t("addToDailyNote"));
+    $(".download-markdown").text(t("downloadMarkdown"));
     $("#language-select").attr("aria-label", t("language"));
     $("#language-select button").each((_, b) => b.setAttribute("aria-pressed", String(b.dataset.lang === language)));
 }
@@ -468,82 +457,106 @@ function getId(hash) {
     return getIdFromHash(hash || window.location.hash);
 }
 
-// ---- Copy button: the main half copies Markdown, the caret opens a menu of formats ----
+// ---- Copy button: the main half copies Markdown, the caret opens a menu of formats and actions ----
 
-function setUpCopyButton() {
-    copyButton.on("click", () => copyNote("markdown"));
-    copyMore.on("click", () => (copyMenu[0].hidden ? openCopyMenu(0) : closeCopyMenu(false)));
-    copyMore.on("keydown", e => {
+// Wires one copy button and its menu; returns { close, setVisible }.
+function setUpCopyTools(tools) {
+    let button = tools.find(".copy-note");
+    let more = tools.find(".copy-more");
+    let menu = tools.find(".copy-menu");
+    let items = () => Array.from(menu[0].querySelectorAll("button"));
+    // index -1 focuses the last item
+    let openMenu = index => {
+        menu[0].hidden = false;
+        more.attr("aria-expanded", "true");
+        let list = items();
+        list[(index + list.length) % list.length].focus();
+    };
+    let close = returnFocus => {
+        if (menu[0].hidden)
+            return;
+        menu[0].hidden = true;
+        more.attr("aria-expanded", "false");
+        if (returnFocus)
+            more[0].focus();
+    };
+
+    button.on("click", () => copyNote("markdown"));
+    more.on("click", () => (menu[0].hidden ? openMenu(0) : close(false)));
+    more.on("keydown", e => {
         if (e.key === "ArrowDown" || e.key === "ArrowUp") {
             e.preventDefault();
-            openCopyMenu(e.key === "ArrowDown" ? 0 : -1);
+            openMenu(e.key === "ArrowDown" ? 0 : -1);
         }
     });
-    copyMenu.on("click", "button", e => {
-        closeCopyMenu(true);
+    menu.on("click", "button", e => {
+        close(true);
         let { action, format } = e.currentTarget.dataset;
         if (action)
-            sendToObsidian(action);
+            runNoteAction(action);
         else
             copyNote(format);
     });
-    copyMenu.on("keydown", e => {
-        let items = copyMenuItems();
-        let index = items.indexOf(document.activeElement);
-        let move = { ArrowDown: index + 1, ArrowUp: index - 1, Home: 0, End: items.length - 1 }[e.key];
+    menu.on("keydown", e => {
+        let list = items();
+        let index = list.indexOf(document.activeElement);
+        let move = { ArrowDown: index + 1, ArrowUp: index - 1, Home: 0, End: list.length - 1 }[e.key];
         if (move !== undefined) {
             e.preventDefault();
-            items[(move + items.length) % items.length].focus();
+            list[(move + list.length) % list.length].focus();
         } else if (e.key === "Escape") {
             e.preventDefault();
-            closeCopyMenu(true);
+            close(true);
         } else if (e.key === "Tab") {
-            closeCopyMenu(false);
+            close(false);
         }
     });
     // a click or tap anywhere outside the button and the menu closes the menu
     $(document).on("pointerdown", e => {
-        if (!copyMenu[0].hidden && !noteTools[0].contains(e.target))
-            closeCopyMenu(false);
+        if (!menu[0].hidden && !tools[0].contains(e.target))
+            close(false);
     });
-}
-
-function copyMenuItems() {
-    return Array.from(copyMenu[0].querySelectorAll("button"));
-}
-
-// index -1 focuses the last item
-function openCopyMenu(index) {
-    copyMenu[0].hidden = false;
-    copyMore.attr("aria-expanded", "true");
-    let items = copyMenuItems();
-    items[(index + items.length) % items.length].focus();
-}
-
-function closeCopyMenu(returnFocus) {
-    if (copyMenu[0].hidden)
-        return;
-    copyMenu[0].hidden = true;
-    copyMore.attr("aria-expanded", "false");
-    if (returnFocus)
-        copyMore[0].focus();
+    return {
+        close,
+        setVisible: visible => {
+            close(false);
+            tools[0].hidden = !visible;
+        }
+    };
 }
 
 function setNoteToolsVisible(visible) {
-    closeCopyMenu(false);
-    noteTools[0].hidden = !visible;
+    copyTools[0].setVisible(visible);
+    noteEnd[0].hidden = !visible;
 }
 
 // action: "obsidian-new" creates a note with the content, "obsidian-daily" appends
-// a link line to today's daily note. The link keeps the key only if the opened link had one.
-function sendToObsidian(action) {
+// a link line to today's daily note (the link keeps the key only if the opened link
+// had one), "download" saves the Markdown as a file. Attachment references become
+// absolute URLs, like in the copied Markdown.
+function runNoteAction(action) {
     if (!currentNote)
         return;
     let title = currentNote.title || genericTitle;
     let href = window.location.href;
-    window.location.href = action === "obsidian-daily"
-        ? buildObsidianDailyUrl(title, shareLink(href, true))
-        : buildObsidianNewUrl(title, markdownForCopy(currentNote.markdown, currentNote.ctx, href));
+    let markdown = markdownForCopy(currentNote.markdown, currentNote.ctx, href);
+    if (action === "download") {
+        let link = document.createElement("a");
+        link.download = `${safeFileName(title)}.md`;
+        link.href = buildDownloadHref(markdown);
+        link.click();
+    } else {
+        window.location.href = action === "obsidian-daily"
+            ? buildObsidianDailyUrl(title, shareLink(href, true))
+            : buildObsidianNewUrl(title, markdown);
+    }
+}
+
+// The app name in the bottom line links to the source code only when the server sets LAPPU_SOURCE_URL.
+function renderAppName() {
+    let url = sourceLink(document.body.dataset.sourceUrl);
+    if (url)
+        $("#app-name").empty().append($("<a>").attr({ href: url, rel: "noopener noreferrer" }).text("Lappu"));
 }
 
 // ---- Page metadata for clippers (Obsidian Web Clipper etc.) ----
@@ -606,7 +619,7 @@ async function copyNote(format) {
 function noteForCopy(format) {
     let root = main[0].cloneNode(true);
     root.removeAttribute("id");
-    for (let el of root.querySelectorAll(".header-anchor, script, style"))
+    for (let el of root.querySelectorAll(".header-anchor, .note-byline, script, style"))
         el.remove();
     // KaTeX markup holds the formula twice (MathML and HTML), so keep one: MathML for
     // HTML, the visible text for plain text. DOMPurify has unwrapped the TeX

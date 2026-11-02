@@ -1,5 +1,5 @@
 // Merging data from earlier plugins (see IMPORT_SOURCES). Must not import "obsidian".
-import {LappuSettings, SharedItem} from "./settings";
+import {LappuSettings, sanitizeSharedItem} from "./settings";
 
 export interface ImportSource {
     /** Plugin id; its data is read from `<configDir>/plugins/<id>/data.json`. */
@@ -41,14 +41,6 @@ export interface ImportResult {
     added: number;
 }
 
-function isSharedItem(value: unknown): value is SharedItem {
-    let item = value as SharedItem;
-    return !!item && typeof item === "object"
-        && typeof item.id === "string" && item.id !== ""
-        && typeof item.password === "string"
-        && typeof item.path === "string";
-}
-
 /**
  * Merges an earlier plugin's data into this plugin's settings without mutating either.
  * Shares are merged and deduplicated by id (existing entries win). The url is only taken
@@ -85,10 +77,11 @@ export function mergeImported(current: LappuSettings, imported: unknown, options
     let added = 0;
     if (Array.isArray(data.shared)) {
         let ids = new Set(settings.shared.map(s => s.id));
-        for (let item of data.shared) {
-            if (!isSharedItem(item) || ids.has(item.id))
+        for (let raw of data.shared) {
+            let item = sanitizeSharedItem(raw);
+            if (!item || ids.has(item.id))
                 continue;
-            settings.shared.push({id: item.id, password: item.password, path: item.path});
+            settings.shared.push(item);
             ids.add(item.id);
             added++;
         }

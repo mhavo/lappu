@@ -61,3 +61,21 @@ describe("confirmsEncryption", () => {
         expect(confirmsEncryption(null)).toBe(false);
     });
 });
+
+import {isShortPassword, isWellFormed} from "../src/encryption";
+
+describe("password checks", () => {
+    it("rejects lone surrogates but accepts pairs", () => {
+        expect(isValidPassword("ab\uD800")).toBe(false);
+        expect(isValidPassword("\uDC00ab")).toBe(false);
+        expect(isValidPassword("a😀b")).toBe(true);
+        expect(isWellFormed("\uD83Dx")).toBe(false);
+        expect(() => encodeLinkKey("a😀")).not.toThrow();
+    });
+
+    it("flags passwords under 12 characters as short", () => {
+        expect(isShortPassword("12345678901")).toBe(true);
+        expect(isShortPassword("123456789012")).toBe(false);
+        expect(isShortPassword(generatePassword())).toBe(false);
+    });
+});

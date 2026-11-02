@@ -1,6 +1,6 @@
 import {App, Modal, Notice, Setting} from "obsidian";
 import {EXPIRY_OPTIONS, ExpiryOption} from "./expiry";
-import {generatePassword, isValidPassword, ShareOptions} from "./encryption";
+import {generatePassword, isShortPassword, isValidPassword, ShareOptions} from "./encryption";
 import type LappuPlugin from "./main";
 
 /**
@@ -58,14 +58,22 @@ export class ShareModal extends Modal {
             });
 
         if (this.encrypt) {
+            let warning: HTMLElement;
+            let updateWarning = () => warning.setText(isShortPassword(this.password) ? t("share.password.short") : "");
             new Setting(contentEl)
                 .setName(t("share.password"))
                 .addText(text => {
                     text.inputEl.addClass("lappu-password-input");
                     text.inputEl.autocomplete = "off";
                     text.setValue(this.password);
-                    text.onChange(v => this.password = v);
+                    text.onChange(v => {
+                        this.password = v;
+                        updateWarning();
+                    });
                 });
+            warning = contentEl.createDiv({cls: "lappu-password-warning"});
+            warning.style.color = "var(--text-warning)";
+            updateWarning();
             new Setting(contentEl)
                 .setName(t("share.passwordInLink"))
                 .setDesc(t("share.passwordInLink.desc"))
@@ -82,7 +90,7 @@ export class ShareModal extends Modal {
 
     private submit(): void {
         if (this.encrypt && !isValidPassword(this.password)) {
-            new Notice(this.plugin.t("share.password.empty"));
+            new Notice(this.plugin.t(this.password.trim().length > 0 ? "share.password.invalid" : "share.password.empty"));
             return;
         }
         this.submitted = true;

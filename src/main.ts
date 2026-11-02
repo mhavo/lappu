@@ -1,5 +1,5 @@
 import {ButtonComponent, moment, Notice, Plugin, requestUrl, TFile} from "obsidian";
-import {defaultSettings, LappuSettings, SharedItem} from "./settings";
+import {defaultSettings, LappuSettings, SharedItem, sanitizeSharedItem} from "./settings";
 import {LappuSettingsTab} from "./settings-tab";
 import {LappuView} from "./view";
 import {Language, resolveLanguage, translate, TranslationKey} from "./i18n";
@@ -177,7 +177,9 @@ export default class LappuPlugin extends Plugin {
     async loadSettings(): Promise<boolean> {
         let data = await this.loadData();
         this.settings = Object.assign({}, defaultSettings, data);
-        this.settings.shared = [...(this.settings.shared ?? [])];
+        let shared: unknown = this.settings.shared;
+        this.settings.shared = (Array.isArray(shared) ? shared : [])
+            .map(sanitizeSharedItem).filter((item): item is SharedItem => item !== null);
         if (!isExpiryOption(this.settings.defaultExpiry))
             this.settings.defaultExpiry = DEFAULT_EXPIRY;
         return !!data;
@@ -375,7 +377,13 @@ export default class LappuPlugin extends Plugin {
             this.refreshAllViews();
 
             await this.uploadAttachments(shared, file, prepared, response.json);
-            await this.copyShareLink(shared, false);
+            try {
+                await this.copyShareLink(shared, false);
+            } catch (e) {
+                // The share exists; only the clipboard step failed.
+                console.log(e);
+                new Notice(this.t("notice.linkCopyFailed", {name: file.basename}), 10000);
+            }
             new Notice(this.t("notice.shared", {name: file.basename}));
             // Older servers ignore expiresIn; the user must not assume the share will vanish.
             if (options.expiry !== "never" && shared.expires === null)
@@ -394,7 +402,12 @@ export default class LappuPlugin extends Plugin {
         if (!this.ensureConfigured())
             return false;
         try {
-            let encrypted = !!item.encrypted && !!item.encryptionPassword;
+            let encrypted = !!item.encrypted;
+            if (encrypted && (typeof item.encryptionPassword !== "string" || !item.encryptionPassword)) {
+                // Never fall back to sending an encrypted share's note as plaintext.
+                new Notice(this.t("notice.encryptedNoPassword", {name: file.basename}), 10000);
+                return false;
+            }
             let prepared = await this.prepareNote(file, encrypted ? item.encryptionPassword : undefined, item.attachmentCache);
             let response = await this.request("PATCH", shareEndpoint(this.settings.url, item.id), buildHeaders(this.settings.token, item.password),
                 buildUpdateBody(encrypted ? await encrypt(item.encryptionPassword, prepared.markdown) : prepared.markdown, encrypted,

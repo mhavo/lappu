@@ -174,3 +174,22 @@ describe("IMPORT_SOURCES", () => {
         expect(current.shared.map(s => s.id)).toEqual(["a1", "b2"]);
     });
 });
+
+describe("mergeImported encrypted shares", () => {
+    it("carries over encryption fields with valid types", () => {
+        let result = mergeImported(settings(), {
+            shared: [{id: "e1", password: "p", path: "E.md", encrypted: true, encryptionPassword: "secret",
+                passwordInLink: false, expires: 1234}]
+        });
+        expect(result.settings.shared[0]).toEqual({id: "e1", password: "p", path: "E.md", encrypted: true,
+            encryptionPassword: "secret", passwordInLink: false, expires: 1234});
+    });
+
+    it("drops invalid types but keeps an encrypted item encrypted", () => {
+        let result = mergeImported(settings(), {
+            shared: [{id: "e1", password: "p", path: "E.md", encrypted: "yes", encryptionPassword: 5,
+                passwordInLink: "no", expires: "soon", attachmentCache: "x"}]
+        });
+        expect(result.settings.shared[0]).toEqual({id: "e1", password: "p", path: "E.md", encrypted: true});
+    });
+});

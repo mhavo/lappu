@@ -18,9 +18,31 @@ export function generatePassword(length: number = GENERATED_PASSWORD_LENGTH): st
     return out;
 }
 
-/** An empty (or whitespace-only) password is rejected; anything else is accepted as typed. */
+/** Whether the string has no lone UTF-16 surrogates (encodeURIComponent throws on those). */
+export function isWellFormed(text: string): boolean {
+    for (let i = 0; i < text.length; i++) {
+        let c = text.charCodeAt(i);
+        if (c >= 0xD800 && c <= 0xDBFF) {
+            let next = text.charCodeAt(i + 1);
+            if (!(next >= 0xDC00 && next <= 0xDFFF))
+                return false;
+            i++;
+        } else if (c >= 0xDC00 && c <= 0xDFFF)
+            return false;
+    }
+    return true;
+}
+
+/** An empty (or whitespace-only) password or one with lone surrogates is rejected; anything else is accepted as typed. */
 export function isValidPassword(password: string): boolean {
-    return password.trim().length > 0;
+    return password.trim().length > 0 && isWellFormed(password);
+}
+
+/** Passwords shorter than this get a warning (not a block); generated ones are far longer. */
+export const MIN_RECOMMENDED_PASSWORD_LENGTH = 12;
+
+export function isShortPassword(password: string): boolean {
+    return password.length < MIN_RECOMMENDED_PASSWORD_LENGTH;
 }
 
 /**

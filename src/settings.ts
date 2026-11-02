@@ -46,3 +46,37 @@ export interface SharedItem {
     attachmentCache?: Record<string, string>;
 
 }
+
+/**
+ * Validates one shared item read from untrusted data (data.json or another plugin's data) and
+ * returns a copy with only well-typed fields, or null when id, password or path are unusable.
+ * An item that claims to be encrypted stays encrypted even if its encryption password is
+ * missing or invalid (the password is then dropped), so it can never silently become plain.
+ */
+export function sanitizeSharedItem(value: unknown): SharedItem | null {
+    if (!value || typeof value !== "object")
+        return null;
+    let raw = value as Record<string, unknown>;
+    if (typeof raw.id !== "string" || raw.id === "" || typeof raw.password !== "string" || typeof raw.path !== "string")
+        return null;
+    let item: SharedItem = {id: raw.id, password: raw.password, path: raw.path};
+    if (raw.expires === null || (typeof raw.expires === "number" && Number.isFinite(raw.expires)))
+        item.expires = raw.expires as number | null;
+    if (raw.encrypted)
+        item.encrypted = true;
+    if (typeof raw.encryptionPassword === "string" && raw.encryptionPassword !== "")
+        item.encryptionPassword = raw.encryptionPassword;
+    if (typeof raw.passwordInLink === "boolean")
+        item.passwordInLink = raw.passwordInLink;
+    let cache = raw.attachmentCache;
+    if (cache && typeof cache === "object" && !Array.isArray(cache)) {
+        let clean: Record<string, string> = {};
+        for (let [key, name] of Object.entries(cache)) {
+            if (typeof name === "string")
+                clean[key] = name;
+        }
+        if (Object.keys(clean).length)
+            item.attachmentCache = clean;
+    }
+    return item;
+}

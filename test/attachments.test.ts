@@ -96,6 +96,25 @@ describe("rewriteAttachments", () => {
         expect(r.attachments.size).toBe(1);
     });
 
+    it("ignores images inside HTML comments", async () => {
+        let a = await hash(A, "png");
+        for (let md of ["<!-- ![[a.png]] -->", "<!--\n![x](a.png)\n![[b.JPG]]\n-->", "<!-- ![[a.png]]\nunclosed ![[b.JPG]]"]) {
+            let r = await rewriteAttachments(md, resolve);
+            expect(r.markdown).toBe(md);
+            expect(r.attachments.size).toBe(0);
+            expect(r.skipped).toEqual([]);
+        }
+        let r = await rewriteAttachments("<!-- ![[a.png]] --> ![[a.png]]", resolve);
+        expect(r.markdown).toBe(`<!-- ![[a.png]] --> ![a](lappu-att:${a})`);
+        expect(r.attachments.size).toBe(1);
+    });
+
+    it("does not start a comment inside code", async () => {
+        let a = await hash(A, "png");
+        let r = await rewriteAttachments("```\n<!--\n```\n![[a.png]]\n\n`<!--` ![[a.png]]", resolve);
+        expect(r.markdown).toBe(`\`\`\`\n<!--\n\`\`\`\n![a](lappu-att:${a})\n\n\`<!--\` ![a](lappu-att:${a})`);
+    });
+
     it("treats an unclosed fence as running to the end", async () => {
         let md = "![[a.png]]\n```\n![[a.png]]";
         let r = await rewriteAttachments(md, resolve);

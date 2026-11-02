@@ -72,11 +72,11 @@ function protectedRanges(text: string): Array<[number, number]> {
         fenced.push([open.start, text.length]);
     ranges.push(...fenced);
 
-    // inline code in the text between fenced blocks
+    // inline code and HTML comments (invisible in the note, so never shared) between fenced blocks
     let from = 0;
     for (let [start, end] of [...fenced, [text.length, text.length] as [number, number]]) {
         let segment = text.substring(from, start);
-        let inline = /(`+)(?!`)[\s\S]*?[^`]\1(?!`)/g;
+        let inline = /(`+)(?!`)[\s\S]*?[^`]\1(?!`)|<!--[\s\S]*?(?:-->|$)/g;
         let m: RegExpExecArray | null;
         while ((m = inline.exec(segment)) != null)
             ranges.push([from + m.index, from + m.index + m[0].length]);

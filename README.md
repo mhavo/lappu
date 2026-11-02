@@ -81,11 +81,17 @@ All calls go to `/share.php`, as with the PHP server. Write calls need `Authoriz
 | Request | Result |
 |---|---|
 | `GET ?id=<id>` | Markdown as `text/plain`, or 404 |
-| `GET ?meta&id=<id>` | JSON `{"id","created"}` |
+| `GET ?meta&id=<id>` | JSON `{"id","created","expires","encrypted"}`; `expires` is unix seconds or `null` |
+| `GET ?att=<id>/<name>` | One attachment, or 404 |
 | `GET ?quote` | JSON `{"quote","source"}` |
-| `POST`, body `{"content": "..."}` | JSON `{"id","password","created"}`; the password is returned only here |
-| `PATCH ?id=<id>`, header `Password`, body `{"content"}` | 200, or 400 / 401 / 404 |
+| `POST`, body `{"content", "expiresIn"?, "encrypted"?, "attachments"?}` | JSON `{"id","password","created","expires","encrypted","missing"}`; the password is returned only here |
+| `PATCH ?id=<id>`, header `Password`, body `{"content", "encrypted"?, "attachments"?}` | JSON `{"encrypted","missing"}`, or 400 / 401 / 404 |
+| `PUT ?att=<id>/<name>`, header `Password`, raw body | 200, or 400 / 401 / 404 / 413 |
 | `DELETE ?id=<id>`, header `Password` | 200, or 400 / 401 / 404 |
+
+- `expiresIn` is the lifetime in seconds (1 to 31536000); leave it out for a share that never expires. PATCH ignores it.
+- `encrypted: true` means `content` is SimpleTextCrypt ciphertext. The server rejects content that does not look like ciphertext.
+- `attachments` lists the attachment names the share uses, in the form `<sha256>.<ext>`. The reply lists in `missing` the ones the server does not have yet, and the plugin uploads those with `PUT`. The server checks each file's hash and, for plain shares, that its content matches the extension. Attachments no longer listed are deleted.
 
 A missing or wrong token returns `401 Invalid token`, and a wrong share password returns `401 Unauthorized`. Too many failed attempts return 429, and an oversized body returns 413.
 
@@ -121,11 +127,20 @@ The import works as follows:
 
 Imported shares can be updated and deleted only if they live on your server, for example after migrating a self-hosted PHP instance's data directory.
 
-## Roadmap
+## Expiry, encryption and images
 
-- **Phase 2: expiring shares.** Choose an expiry when sharing (never, 1 day, 1 week or 30 days). Expired shares return 404 and are cleaned up in the background.
-- **Phase 3: encrypted shares.** The plugin encrypts the note with a read password (AES-256-GCM with Argon2id, SimpleTextCrypt-compatible), and the viewer decrypts it in the browser. The server never sees the plaintext or the password.
-- **Phase 4: attachments as files.** Local images are uploaded next to the share instead of being embedded as base64. This also fixes local images that don't show up today.
+When you share a note, Lappu asks how long the share should live and whether to encrypt it.
+
+- **Expiry.** Choose *never*, 1 day, 1 week or 30 days. An expired share returns 404 everywhere, and the server deletes it at startup and then every hour. Updating a share never changes its expiry. The Lappu view shows when each share expires.
+- **Encryption.** The plugin encrypts the note and its images in Obsidian before upload (AES-256-GCM with an Argon2id key, compatible with SimpleTextCrypt 5.x). The viewer decrypts them in the browser. The plugin generates a read password, which you can replace with your own. It is stored in the plugin data so you can update the share later.
+  - You can put the password in the link (`#<id>~<password>`), so whoever has the link can read the note. Without it, the viewer asks for the password.
+  - The server never sees the plaintext or the password. It only checks that the content looks like ciphertext.
+  - Decryption takes about a second per note and per image, because Argon2 runs in the browser.
+- **Images.** Local images (png, jpg, jpeg, gif, webp, avif) are uploaded as separate files next to the share instead of being embedded in the note. Each file is named after its SHA-256 hash, so an update uploads only new images. Images inside HTML comments are not uploaded. For an encrypted share, each image is encrypted as well.
+
+### Threat model for encrypted shares
+
+Encryption protects the note from anyone who can read the server's disk or backups and does not have the password. It does not protect against a malicious or compromised server: the server delivers the viewer, so a modified viewer could capture the password when you type it, or read it from the link. If you don't trust the server, don't open encrypted links in its viewer. Remember that anyone you send a link with the password in it can read the note, and so can anyone they forward it to.
 
 ## Development
 

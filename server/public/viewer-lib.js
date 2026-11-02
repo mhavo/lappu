@@ -264,11 +264,44 @@
         return { src: url, name: null };
     }
 
+    // ---- Copying a note ----
+
+    // The note's markdown for the clipboard. In a plain share, `![alt](lappu-att:<name>)`
+    // references become absolute attachment URLs (the same ones the viewer loads), so
+    // the images still work where the text is pasted. Encrypted shares are left as
+    // they are: their images only exist as blob: URLs inside this page.
+    // ctx = { id, encrypted } of the shared note, absent for other notes.
+    function markdownForCopy(markdown, ctx, baseUrl) {
+        const text = String(markdown ?? "");
+        if (!ctx || ctx.encrypted)
+            return text;
+        return text.replace(/(\]\(\s*<?)lappu-att:([^\s)>]*)/gi, (match, prefix, name) => {
+            const url = attachmentUrl(ctx.id, name);
+            return url ? prefix + new URL(url, baseUrl).href : match;
+        });
+    }
+
+    // A URL from the rendered note made absolute for the clipboard, or null when it
+    // means nothing outside this page (blob: images of encrypted shares, the
+    // placeholder of a not yet decrypted image, empty or invalid values).
+    function copyableUrl(value, baseUrl) {
+        if (typeof value !== "string" || value === "" || value === ATTACHMENT_PLACEHOLDER)
+            return null;
+        let url;
+        try {
+            url = new URL(value, baseUrl);
+        } catch (e) {
+            return null;
+        }
+        return url.protocol === "blob:" ? null : url.href;
+    }
+
     const api = {
         ID_PATTERN, parseHash, getIdFromHash, classifyId, escapeHtml, formatParts,
         safeFileName, buildObsidianNewUrl, buildDownloadHref, pageTitle, formatExpires,
         CrypterError, decodeMessage, deriveKey, decrypt, decryptBytes, cryptoAvailable,
-        ATTACHMENT_PATTERN, ATTACHMENT_PLACEHOLDER, isAttachmentName, attachmentMime, attachmentUrl, rewriteAttachmentSrc
+        ATTACHMENT_PATTERN, ATTACHMENT_PLACEHOLDER, isAttachmentName, attachmentMime, attachmentUrl, rewriteAttachmentSrc,
+        markdownForCopy, copyableUrl
     };
     if (typeof module === "object" && module.exports)
         module.exports = api;

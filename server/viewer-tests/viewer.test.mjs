@@ -294,3 +294,38 @@ test("pageTitle never uses the decrypted heading of an encrypted note", () => {
     assert.equal(lib.pageTitle("Plan", false, "Lappu"), "Plan");
     assert.equal(lib.pageTitle("", false, "Lappu"), "Lappu");
 });
+
+const BASE = "https://notes.example/view/?x=1#abcd1234-heading";
+
+test("markdownForCopy makes attachment references of a plain share absolute", () => {
+    const md = `# T\n\n![a pic](lappu-att:${H}.png) and ![b](LAPPU-ATT:${H}.webp "title")\n`;
+    assert.equal(lib.markdownForCopy(md, { id: "abcd1234", encrypted: false }, BASE),
+        `# T\n\n![a pic](https://notes.example/view/share.php?att=abcd1234/${H}.png) and ` +
+        `![b](https://notes.example/view/share.php?att=abcd1234/${H}.webp "title")\n`);
+});
+
+test("markdownForCopy leaves encrypted shares, other notes and invalid references alone", () => {
+    const md = `![x](lappu-att:${H}.png)`;
+    assert.equal(lib.markdownForCopy(md, { id: "abcd1234", encrypted: true }, BASE), md);
+    assert.equal(lib.markdownForCopy(md, undefined, BASE), md);
+    assert.equal(lib.markdownForCopy(md, { id: "bad id", encrypted: false }, BASE), md);
+    for (const bad of [`![x](lappu-att:${H}.svg)`, "![x](lappu-att:../x.png)", `![x](lappu-att:${H}.png?y=1)`,
+        `text lappu-att:${H}.png`, "![x](https://example.com/a.png)"])
+        assert.equal(lib.markdownForCopy(bad, { id: "abcd1234", encrypted: false }, BASE), bad, bad);
+});
+
+test("copyableUrl resolves relative URLs and drops blob and placeholder images", () => {
+    assert.equal(lib.copyableUrl("share.php?att=abcd1234/x.png", BASE), "https://notes.example/view/share.php?att=abcd1234/x.png");
+    assert.equal(lib.copyableUrl("#abcd1234-other", BASE), "https://notes.example/view/?x=1#abcd1234-other");
+    assert.equal(lib.copyableUrl("https://example.com/a", BASE), "https://example.com/a");
+    assert.equal(lib.copyableUrl("mailto:a@example.com", BASE), "mailto:a@example.com");
+    assert.equal(lib.copyableUrl("data:image/png;base64,AAAA", BASE), "data:image/png;base64,AAAA");
+    for (const bad of ["blob:https://notes.example/1234", "BLOB:x", lib.ATTACHMENT_PLACEHOLDER, "", null, undefined, "http://[bad"])
+        assert.equal(lib.copyableUrl(bad, BASE), null, String(bad));
+});
+
+test("copy translations exist in every language", () => {
+    for (const lang of i18n.languages)
+        for (const key of ["copy", "copyOptions", "copyMarkdown", "copyPlainText", "copyHtml", "copied", "copyFailed", "copyHtmlUnsupported"])
+            assert.notEqual(i18n.translate(lang, key), key, `${lang} ${key}`);
+});

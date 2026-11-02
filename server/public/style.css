@@ -232,3 +232,135 @@ img.attachment-broken {
     border: 1px dashed currentColor;
     opacity: 0.6;
 }
+
+/* Copy button: floats at the top right of the note, next to the title, and scrolls with it. */
+#note-tools {
+    --tool-border: #d8d2f0;
+    --tool-bg: #ffffff;
+    --tool-hover: #f3f0fd;
+    --menu-shadow: rgba(0, 0, 0, 0.12);
+    float: right;
+    position: relative;
+    margin: 0.4em 0 0.5em 1em;
+    font-size: 0.9em;
+    line-height: 1;
+}
+
+#note-tools[hidden], #copy-menu[hidden] {
+    display: none;
+}
+
+.split-button {
+    display: inline-flex;
+    border: 1px solid var(--tool-border);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--tool-bg);
+}
+
+.split-button button, #copy-menu button {
+    font: inherit;
+    color: #9275f0;
+    background: none;
+    border: none;
+    cursor: pointer;
+}
+
+.split-button button {
+    padding: 0.45em 0.7em;
+    white-space: nowrap;
+}
+
+/* the glyphs come from a fallback font and look small next to Inter */
+.split-button .copy-icon, .split-button button.caret span {
+    font-size: 1.2em;
+}
+
+.split-button button.caret {
+    padding: 0.45em 0.5em;
+    border-left: 1px solid var(--tool-border);
+}
+
+.split-button button:hover, .split-button button[aria-expanded="true"], #copy-menu button:hover {
+    color: #a48cf2;
+    background: var(--tool-hover);
+}
+
+.split-button button:focus-visible, #copy-menu button:focus-visible {
+    outline: 2px solid #9275f0;
+    outline-offset: -2px;
+}
+
+#copy-menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    min-width: 10em;
+    padding: 4px 0;
+    border: 1px solid var(--tool-border);
+    border-radius: 6px;
+    background: var(--tool-bg);
+    box-shadow: 0 4px 14px var(--menu-shadow);
+}
+
+#copy-menu button {
+    text-align: left;
+    padding: 0.6em 1em;
+}
+
+#copy-menu button:focus-visible {
+    background: var(--tool-hover);
+}
+
+/* The transient "Copied" confirmation. */
+#copy-status {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%);
+    z-index: 20;
+    max-width: calc(100% - 32px);
+    padding: 0.5em 1em;
+    border-radius: 6px;
+    color: #ffffff;
+    background: #333333;
+    font-size: 0.9em;
+    text-align: center;
+    pointer-events: none;
+}
+
+#copy-status:empty {
+    display: none;
+}
+
+/* Off-screen layout of a note copy, only to read its innerText. */
+.copy-scratch {
+    position: fixed;
+    left: -10000px;
+    top: 0;
+    width: 700px;
+}
+
+/* after the light rules above, so these win */
+@media (prefers-color-scheme: dark) {
+    #note-tools {
+        --tool-border: #444;
+        --tool-bg: #1e1e1e;
+        --tool-hover: #2c2a33;
+        --menu-shadow: rgba(0, 0, 0, 0.5);
+    }
+
+    #copy-status {
+        color: #1e1e1e;
+        background: #dadada;
+    }
+}
+
+@media print {
+    #note-tools, #copy-status {
+        display: none;
+    }
+}

@@ -1,4 +1,4 @@
-const { parseHash, getIdFromHash, classifyId, decrypt, decryptBytes, cryptoAvailable, rewriteAttachmentSrc, attachmentUrl, attachmentMime, formatParts, safeFileName, buildObsidianNewUrl, buildDownloadHref, pageTitle, formatExpires } = LappuViewer;
+const { parseHash, getIdFromHash, classifyId, decrypt, decryptBytes, cryptoAvailable, rewriteAttachmentSrc, attachmentUrl, attachmentMime, markdownForCopy, copyableUrl, formatParts, safeFileName, buildObsidianNewUrl, buildDownloadHref, pageTitle, formatExpires } = LappuViewer;
 const LANGUAGE_STORAGE_KEY = "lappu-language";
 
 let md = markdownit({
@@ -61,6 +61,11 @@ let attachmentStatus = $("#attachment-status");
 let noteFooter = $("#note-footer");
 let download = $("#download-markdown");
 let open = $("#open-in-obsidian");
+let noteTools = $("#note-tools");
+let copyButton = $("#copy-note");
+let copyMore = $("#copy-more");
+let copyMenu = $("#copy-menu");
+let copyStatus = $("#copy-status");
 
 // the page title of the home page and of encrypted notes
 const genericTitle = window.document.title;
@@ -76,10 +81,17 @@ let attachmentProgress = null;
 // blob: URLs of decrypted images of the current note
 let blobUrls = [];
 
+// the shown shared note for the copy button ({ markdown, ctx }), or null when no shared note is shown
+let currentNote = null;
+// the key of the transient copy confirmation that is shown, or null
+let copyStatusKey = null;
+let copyStatusTimer = null;
+
 // bumped on every display() so that late responses of an abandoned note are ignored
 let displayGeneration = 0;
 
 $("#language-select").on("click", "button", e => setLanguage(e.currentTarget.dataset.lang));
+setUpCopyButton();
 applyLanguage();
 
 $(window).on("hashchange", e => {
@@ -93,7 +105,7 @@ display();
 function display() {
     let generation = ++displayGeneration;
     showMessage({ key: "loading" });
-    // nothing of the previous note may linger: its text is in the download link and the Obsidian link
+    // nothing of the previous note may linger: its text is in the download link, the Obsidian link and currentNote
     download.removeAttr("href").removeAttr("download");
     open.removeAttr("href");
     window.document.title = genericTitle;
@@ -133,7 +145,7 @@ function display() {
 }
 
 // Asks for the password (or tries the one in the link) and renders the note when it decrypts.
-// The decrypted text only lives in this function's closure and in the rendered note.
+// The decrypted text only lives in this function's closure, the rendered note and its copy/download links.
 async function openEncrypted(ciphertext, id, meta, generation) {
     if (!cryptoAvailable()) {
         showMessage({ key: "cryptoUnavailable", homeLink: true });
@@ -178,6 +190,9 @@ function renderNote(t, id, kind, meta, password) {
     let env = kind === "valid" ? { attachments: { id, encrypted } } : {};
     // assigned via innerHTML (not jQuery .html()) so that nothing that slipped through sanitizing runs as a script
     main[0].innerHTML = DOMPurify.sanitize(md.render(t, env));
+    // only shared notes get the copy button, not the home page
+    currentNote = kind === "valid" ? { markdown: t, ctx: env.attachments } : null;
+    setNoteToolsVisible(currentNote !== null);
     if (kind === "valid" && encrypted && password)
         loadEncryptedImages(id, password, displayGeneration);
 
@@ -338,6 +353,9 @@ function renderNoteFooter() {
 // Shows a UI message in #main. Parameters are rendered as <code> text nodes.
 function showMessage(message) {
     currentMessage = message;
+    // a message is never a note, so there is nothing to copy
+    currentNote = null;
+    setNoteToolsVisible(false);
     renderMessage();
 }
 
@@ -382,6 +400,12 @@ function renderStaticStrings() {
         obsidian: "Obsidian"
     }, (value, name) => $("<a>").attr("href", name === "app" ? "/" : "https://obsidian.md").text(value)));
     download.text(t("downloadMarkdown"));
+    $("#copy-note-label").text(t("copy"));
+    copyMore.attr({ "aria-label": t("copyOptions"), title: t("copyOptions") });
+    copyMenu.attr("aria-label", t("copyOptions"));
+    $("#copy-as-markdown").text(t("copyMarkdown"));
+    $("#copy-as-plain").text(t("copyPlainText"));
+    $("#copy-as-html").text(t("copyHtml"));
     open.text(t("copyToObsidian"));
     $("#language-select").attr("aria-label", t("language"));
     $("#language-select button").each((_, b) => b.setAttribute("aria-pressed", String(b.dataset.lang === language)));
@@ -393,6 +417,7 @@ function applyLanguage() {
     renderMessage();
     renderNoteFooter();
     renderAttachmentProgress();
+    renderCopyStatus();
 }
 
 function setLanguage(lang) {
@@ -435,4 +460,172 @@ function findHashTarget() {
 
 function getId(hash) {
     return getIdFromHash(hash || window.location.hash);
+}
+
+// ---- Copy button: the main half copies Markdown, the caret opens a menu of formats ----
+
+function setUpCopyButton() {
+    copyButton.on("click", () => copyNote("markdown"));
+    copyMore.on("click", () => (copyMenu[0].hidden ? openCopyMenu(0) : closeCopyMenu(false)));
+    copyMore.on("keydown", e => {
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            openCopyMenu(e.key === "ArrowDown" ? 0 : -1);
+        }
+    });
+    copyMenu.on("click", "button", e => {
+        closeCopyMenu(true);
+        copyNote(e.currentTarget.dataset.format);
+    });
+    copyMenu.on("keydown", e => {
+        let items = copyMenuItems();
+        let index = items.indexOf(document.activeElement);
+        let move = { ArrowDown: index + 1, ArrowUp: index - 1, Home: 0, End: items.length - 1 }[e.key];
+        if (move !== undefined) {
+            e.preventDefault();
+            items[(move + items.length) % items.length].focus();
+        } else if (e.key === "Escape") {
+            e.preventDefault();
+            closeCopyMenu(true);
+        } else if (e.key === "Tab") {
+            closeCopyMenu(false);
+        }
+    });
+    // a click or tap anywhere outside the button and the menu closes the menu
+    $(document).on("pointerdown", e => {
+        if (!copyMenu[0].hidden && !noteTools[0].contains(e.target))
+            closeCopyMenu(false);
+    });
+}
+
+function copyMenuItems() {
+    return Array.from(copyMenu[0].querySelectorAll("button"));
+}
+
+// index -1 focuses the last item
+function openCopyMenu(index) {
+    copyMenu[0].hidden = false;
+    copyMore.attr("aria-expanded", "true");
+    let items = copyMenuItems();
+    items[(index + items.length) % items.length].focus();
+}
+
+function closeCopyMenu(returnFocus) {
+    if (copyMenu[0].hidden)
+        return;
+    copyMenu[0].hidden = true;
+    copyMore.attr("aria-expanded", "false");
+    if (returnFocus)
+        copyMore[0].focus();
+}
+
+function setNoteToolsVisible(visible) {
+    closeCopyMenu(false);
+    noteTools[0].hidden = !visible;
+}
+
+// format: "markdown" | "plain" | "html"
+async function copyNote(format) {
+    if (!currentNote)
+        return;
+    try {
+        if (format === "html") {
+            if (typeof ClipboardItem !== "function" || !navigator.clipboard || !navigator.clipboard.write) {
+                showCopyStatus("copyHtmlUnsupported");
+                return;
+            }
+            let html = noteForCopy("html").innerHTML;
+            let plain = plainTextOf(noteForCopy("plain"));
+            await navigator.clipboard.write([new ClipboardItem({
+                "text/html": new Blob([html], { type: "text/html" }),
+                "text/plain": new Blob([plain], { type: "text/plain" })
+            })]);
+        } else {
+            let text = format === "plain"
+                ? plainTextOf(noteForCopy("plain"))
+                : markdownForCopy(currentNote.markdown, currentNote.ctx, window.location.href);
+            await navigator.clipboard.writeText(text);
+        }
+        showCopyStatus("copied");
+    } catch (e) {
+        // no clipboard API (e.g. plain http) or the browser refused
+        showCopyStatus("copyFailed");
+    }
+}
+
+// A detached copy of the rendered note without the viewer's own bits, with
+// URLs that work outside this page. format: "html" | "plain"
+function noteForCopy(format) {
+    let root = main[0].cloneNode(true);
+    root.removeAttribute("id");
+    for (let el of root.querySelectorAll(".header-anchor, script, style"))
+        el.remove();
+    // KaTeX markup holds the formula twice (MathML and HTML), so keep one: MathML for
+    // HTML, the visible text for plain text. DOMPurify has unwrapped the TeX
+    // <annotation>, leaving its source as a stray text node in <math>; drop that.
+    for (let el of root.querySelectorAll(".katex")) {
+        let math = el.querySelector(".katex-mathml math");
+        let visual = el.querySelector(".katex-html");
+        if (format === "plain") {
+            el.replaceWith(document.createTextNode((visual || el).textContent));
+        } else if (math) {
+            for (let node of Array.from(math.childNodes))
+                if (node.nodeType === Node.TEXT_NODE)
+                    node.remove();
+            el.replaceWith(math);
+        }
+    }
+    for (let box of root.querySelectorAll('input[type="checkbox"]')) {
+        if (format === "plain") {
+            box.replaceWith(document.createTextNode(box.hasAttribute("checked") ? "[x] " : "[ ] "));
+        } else {
+            box.removeAttribute("id");
+            box.setAttribute("disabled", "");
+        }
+    }
+    for (let img of root.querySelectorAll("img")) {
+        let src = copyableUrl(img.getAttribute("src"), window.location.href);
+        if (!src || img.classList.contains("attachment-broken")) {
+            // decrypted (blob:) or missing images mean nothing elsewhere: keep their alt text
+            let alt = img.getAttribute("alt");
+            img.replaceWith(document.createTextNode(alt ? `[${alt}]` : ""));
+            continue;
+        }
+        img.setAttribute("src", src);
+        img.removeAttribute("data-lappu-att");
+    }
+    for (let a of root.querySelectorAll("a[href]")) {
+        let href = copyableUrl(a.getAttribute("href"), window.location.href);
+        if (href)
+            a.setAttribute("href", href);
+        else
+            a.removeAttribute("href");
+    }
+    return root;
+}
+
+// innerText needs a rendered element to turn the layout into line breaks, so the
+// copy is laid out off screen for a moment.
+function plainTextOf(root) {
+    root.classList.add("copy-scratch");
+    document.body.appendChild(root);
+    try {
+        return root.innerText.replace(/\n{3,}/g, "\n\n").trim();
+    } finally {
+        root.remove();
+    }
+}
+
+function showCopyStatus(key) {
+    copyStatusKey = key;
+    renderCopyStatus();
+    clearTimeout(copyStatusTimer);
+    copyStatusTimer = setTimeout(() => {
+        copyStatusKey = null;
+        renderCopyStatus();
+    }, 2500);
+}
+
+function renderCopyStatus() {
+    copyStatus.text(copyStatusKey ? t(copyStatusKey) : "");
 }

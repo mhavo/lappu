@@ -32,8 +32,19 @@
 <body>
     <div class="content">
         <div id="attachment-status" role="status"></div>
+        <div id="note-tools" hidden>
+            <span class="split-button">
+                <button type="button" id="copy-note"><span class="copy-icon" aria-hidden="true">⧉</span> <span id="copy-note-label"></span></button><button type="button" id="copy-more" class="caret" aria-haspopup="menu" aria-expanded="false" aria-controls="copy-menu"><span aria-hidden="true">▾</span></button>
+            </span>
+            <div id="copy-menu" role="menu" hidden>
+                <button type="button" role="menuitem" data-format="markdown" id="copy-as-markdown"></button>
+                <button type="button" role="menuitem" data-format="plain" id="copy-as-plain"></button>
+                <button type="button" role="menuitem" data-format="html" id="copy-as-html"></button>
+            </div>
+        </div>
         <div id="main"></div>
         <div id="note-footer"></div>
+        <div id="copy-status" role="status"></div>
         <div id="footer">
             <span id="footer-credit"></span> – <a href="#" id="download-markdown"></a> – <a href="#" id="open-in-obsidian"></a> – <span id="language-select" role="group"><button type="button" data-lang="fi" lang="fi">FI</button> / <button type="button" data-lang="en" lang="en">EN</button></span>
         </div>

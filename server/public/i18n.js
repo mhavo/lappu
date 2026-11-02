@@ -24,7 +24,15 @@
             invalidEncrypted: "The encrypted note is damaged or in an unknown format.",
             cryptoUnavailable: "Decryption needs a secure connection (https) and a browser with WebAssembly support.",
             decryptingImages: "Decrypting images {done}/{total}...",
-            imageFailed: "The image could not be loaded."
+            imageFailed: "The image could not be loaded.",
+            copy: "Copy",
+            copyOptions: "Copy as…",
+            copyMarkdown: "Markdown",
+            copyPlainText: "Plain text",
+            copyHtml: "HTML",
+            copied: "Copied",
+            copyFailed: "The browser did not allow copying",
+            copyHtmlUnsupported: "This browser can't copy as HTML"
         },
         fi: {
             loading: "Ladataan...",
@@ -45,7 +53,15 @@
             invalidEncrypted: "Salattu lappu on vioittunut tai tuntemattomassa muodossa.",
             cryptoUnavailable: "Salauksen purku vaatii suojatun yhteyden (https) ja WebAssembly-tuen selaimelta.",
             decryptingImages: "Puretaan kuvien salausta {done}/{total}...",
-            imageFailed: "Kuvaa ei voitu ladata."
+            imageFailed: "Kuvaa ei voitu ladata.",
+            copy: "Kopioi",
+            copyOptions: "Kopioi muodossa…",
+            copyMarkdown: "Markdown",
+            copyPlainText: "Pelkkä teksti",
+            copyHtml: "HTML",
+            copied: "Kopioitu",
+            copyFailed: "Selain ei sallinut kopiointia",
+            copyHtmlUnsupported: "Tämä selain ei osaa kopioida HTML-muodossa"
         }
     };
     const languages = Object.keys(translations);

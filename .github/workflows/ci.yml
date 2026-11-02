@@ -33,6 +33,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: npm
+      - run: npm ci # the crypto tests import hash-wasm
       - name: Test
         run: node --test "server/viewer-tests/*.test.mjs"
 

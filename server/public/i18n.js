@@ -32,7 +32,12 @@
             downloadMarkdown: "Download .md",
             copied: "Copied",
             copyFailed: "The browser did not allow copying",
-            copyHtmlUnsupported: "This browser can't copy as HTML"
+            copyHtmlUnsupported: "This browser can't copy as HTML",
+            showQrCode: "Show QR code",
+            qrCode: "QR code",
+            qrHasPassword: "The link contains the password",
+            close: "Close",
+            contents: "Contents"
         },
         fi: {
             loading: "Ladataan...",
@@ -61,7 +66,12 @@
             downloadMarkdown: "Lataa .md",
             copied: "Kopioitu",
             copyFailed: "Selain ei sallinut kopiointia",
-            copyHtmlUnsupported: "Tämä selain ei osaa kopioida HTML-muodossa"
+            copyHtmlUnsupported: "Tämä selain ei osaa kopioida HTML-muodossa",
+            showQrCode: "Näytä QR-koodi",
+            qrCode: "QR-koodi",
+            qrHasPassword: "Linkki sisältää salasanan",
+            close: "Sulje",
+            contents: "Sisällys"
         }
     };
     const languages = Object.keys(translations);

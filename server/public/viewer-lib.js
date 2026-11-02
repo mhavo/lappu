@@ -393,12 +393,47 @@
         return url.protocol === "blob:" ? null : url.href;
     }
 
+    // ---- Table of contents and QR code ----
+
+    // The table of contents of a note from its headings ([{ level, id, text }] in
+    // document order): only h2 and h3 count (h1 is the title), and only notes with
+    // at least `min` of them get one. Returns [{ id, text, children }] where an
+    // h3 is a child of the h2 before it (or top level when there is none).
+    function buildToc(headings, min = 3) {
+        const entries = (headings || []).filter(h => (h.level === 2 || h.level === 3) && h.id);
+        if (entries.length < min)
+            return [];
+        const toc = [];
+        let section = null; // the last h2 entry
+        for (const h of entries) {
+            const item = { id: h.id, text: h.text, children: [] };
+            if (h.level === 3 && section)
+                section.children.push(item);
+            else
+                toc.push(item);
+            if (h.level === 2)
+                section = item;
+        }
+        return toc;
+    }
+
+    // An SVG path of the dark modules of a QR code (one 1x1 square per module,
+    // shifted by `margin` modules), for a viewBox of size + 2 * margin.
+    function qrPath(size, isDark, margin) {
+        let d = "";
+        for (let row = 0; row < size; row++)
+            for (let col = 0; col < size; col++)
+                if (isDark(row, col))
+                    d += `M${col + margin} ${row + margin}h1v1h-1z`;
+        return d;
+    }
+
     const api = {
         ID_PATTERN, parseHash, parseLocation, getIdFromHash, classifyId, escapeHtml, formatParts,
         safeFileName, buildObsidianNewUrl, buildObsidianDailyUrl, shareLink, noteMetadata, buildDownloadHref, pageTitle, formatTimestamp, formatDate, sourceLink,
         CrypterError, decodeMessage, deriveKey, decrypt, decryptBytes, cryptoAvailable,
         ATTACHMENT_PATTERN, ATTACHMENT_PLACEHOLDER, isAttachmentName, attachmentMime, attachmentUrl, rewriteAttachmentSrc,
-        markdownForCopy, copyableUrl
+        markdownForCopy, copyableUrl, buildToc, qrPath
     };
     if (typeof module === "object" && module.exports)
         module.exports = api;

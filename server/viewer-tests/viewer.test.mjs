@@ -442,3 +442,37 @@ test("attachment URLs work from share pages", () => {
     assert.equal(lib.markdownForCopy(md, { id: "abcd1234", encrypted: false }, "https://notes.example/s/abcd1234#abcd1234-h"),
         `![x](https://notes.example/share.php?att=abcd1234/${H}.png)`);
 });
+
+test("buildToc nests h3 under the h2 before it and skips other levels", () => {
+    const h = (level, id) => ({ level, id, text: id.toUpperCase() });
+    assert.deepEqual(lib.buildToc([h(1, "t"), h(3, "a"), h(2, "b"), h(3, "c"), h(4, "x"), h(3, "d"), h(2, "e")]), [
+        { id: "a", text: "A", children: [] },
+        { id: "b", text: "B", children: [{ id: "c", text: "C", children: [] }, { id: "d", text: "D", children: [] }] },
+        { id: "e", text: "E", children: [] }
+    ]);
+});
+
+test("buildToc needs at least three h2/h3 headings with an id", () => {
+    const h = (level, id) => ({ level, id, text: id });
+    assert.deepEqual(lib.buildToc([h(1, "t"), h(2, "a"), h(3, "b"), h(4, "c"), h(5, "d")]), []);
+    assert.deepEqual(lib.buildToc([h(2, "a"), h(2, ""), h(3, "b")]), []);
+    assert.deepEqual(lib.buildToc([]), []);
+    assert.deepEqual(lib.buildToc(undefined), []);
+    assert.equal(lib.buildToc([h(2, "a"), h(2, "b"), h(2, "c")]).length, 3);
+});
+
+test("qrPath draws one square per dark module, shifted by the margin", () => {
+    assert.equal(lib.qrPath(2, (row, col) => row === col, 1), "M1 1h1v1h-1zM2 2h1v1h-1z");
+    assert.equal(lib.qrPath(3, () => false, 4), "");
+});
+
+test("QR code and table of contents translations exist in every language", () => {
+    for (const lang of i18n.languages)
+        for (const key of ["showQrCode", "qrCode", "qrHasPassword", "close", "contents"])
+            assert.notEqual(i18n.translate(lang, key), key, `${lang} ${key}`);
+});
+
+test("the QR code library is pinned with Subresource Integrity", () => {
+    const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+    assert.match(html, /<script src="https:\/\/cdn\.jsdelivr\.net\/npm\/qrcode-generator@1\.4\.4\/qrcode\.js" integrity="sha384-[A-Za-z0-9+/]{64}" crossorigin="anonymous"><\/script>/);
+});

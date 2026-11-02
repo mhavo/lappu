@@ -264,13 +264,17 @@ img.attachment-broken {
     opacity: 0.6;
 }
 
-/* Copy button: floats at the top right of the note, next to the title, and scrolls with it.
-   The same button sits centred below the note, with its menu opening upwards. */
-.note-tools {
+/* the colours of the copy button, the table of contents and the QR dialog */
+.note-tools, .toc, .qr-dialog {
     --tool-border: #d8d2f0;
     --tool-bg: #ffffff;
     --tool-hover: #f3f0fd;
     --menu-shadow: rgba(0, 0, 0, 0.12);
+}
+
+/* Copy button: floats at the top right of the note, next to the title, and scrolls with it.
+   The same button sits centred below the note, with its menu opening upwards. */
+.note-tools {
     float: right;
     position: relative;
     margin: 0.4em 0 0.5em 1em;
@@ -395,9 +399,108 @@ img.attachment-broken {
     width: 700px;
 }
 
+/* Table of contents after the title */
+/* flow-root keeps the box clear of the floating copy button */
+.toc {
+    display: flow-root;
+    margin: 0 0 1.5em;
+    padding: 0.5em 1em;
+    border: 1px solid var(--tool-border);
+    border-radius: 6px;
+    font-size: var(--small);
+}
+
+.toc summary {
+    color: #9275f0;
+    cursor: pointer;
+}
+
+.toc[open] summary {
+    margin-bottom: 0.3em;
+}
+
+.toc ul {
+    margin: 0;
+    padding-left: 1.2em;
+}
+
+.toc a {
+    text-decoration-line: none;
+}
+
+.toc a:hover {
+    text-decoration-line: underline;
+}
+
+/* QR code of the share link */
+.qr-dialog {
+    max-width: min(20em, calc(100vw - 32px));
+    padding: 1.2em;
+    border: 1px solid var(--tool-border);
+    border-radius: 8px;
+    color: inherit;
+    background: var(--tool-bg);
+    box-shadow: 0 4px 14px var(--menu-shadow);
+    text-align: center;
+}
+
+.qr-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.4);
+}
+
+.qr-title {
+    margin: 0 0 0.6em;
+    font-size: 1em;
+}
+
+.qr-code svg {
+    display: block;
+    width: 100%;
+    max-width: 16em;
+    margin: 0 auto;
+}
+
+.qr-link {
+    margin: 0.8em 0 0;
+    font-size: var(--small);
+    overflow-wrap: anywhere;
+}
+
+.qr-password {
+    margin: 0.4em 0 0;
+    font-size: var(--small);
+    color: var(--quiet);
+}
+
+.qr-password[hidden] {
+    display: none;
+}
+
+.qr-close {
+    margin-top: 1em;
+    padding: 0.5em 1.2em;
+    font: inherit;
+    font-size: var(--small);
+    color: #9275f0;
+    background: none;
+    border: 1px solid var(--tool-border);
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.qr-close:hover {
+    color: #a48cf2;
+    background: var(--tool-hover);
+}
+
+.qr-close:focus-visible {
+    outline: 2px solid #9275f0;
+    outline-offset: 2px;
+}
+
 /* after the light rules above, so these win */
 @media (prefers-color-scheme: dark) {
-    .note-tools {
+    .note-tools, .toc, .qr-dialog {
         --tool-border: #444;
         --tool-bg: #1e1e1e;
         --tool-hover: #2c2a33;
@@ -411,7 +514,7 @@ img.attachment-broken {
 }
 
 @media print {
-    .note-tools, #copy-status {
+    .note-tools, #copy-status, .qr-dialog {
         display: none;
     }
 }

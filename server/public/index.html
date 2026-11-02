@@ -20,6 +20,7 @@
     <script src="https://cdn.jsdelivr.net/npm/markdown-it-anchor@8.6.7/dist/markdownItAnchor.umd.js" integrity="sha384-NBC9+Ij41ttIhv3+kXK72NdkTDeXlWXbVA9MuRvbi6kNYSxfnUf83d1etG5+Vh6L" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/markdown-it-footnote@3.0.3/dist/markdown-it-footnote.min.js" integrity="sha384-8GI+PzQqDMS2g58dN0NG07YRb9MdbArEZbvnE6BVFzI6JCZLMurPzOHb1Ttdy8Li" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/markdown-it-checkbox@1.1.0/dist/markdown-it-checkbox.min.js" integrity="sha384-mqP2OImp5gvfOsXL630fBCJUB0czB1eKzPyvseWne61BIvY/s6P9kOXdtAmqSqOX" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js" integrity="sha384-8FWZA6BGMXhsfO+BLtrJK0We6gg5o1JyO8xQm6peWDEUs17ACA5ziE/NIAkl9z2k" crossorigin="anonymous"></script>
 
     <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter&display=swap">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=JetBrains+Mono&display=swap">
@@ -45,6 +46,7 @@
                 <button type="button" role="menuitem" data-action="obsidian-new" class="add-to-obsidian"></button>
                 <button type="button" role="menuitem" data-action="obsidian-daily" class="add-to-daily-note"></button>
                 <button type="button" role="menuitem" data-action="download" class="download-markdown"></button>
+                <button type="button" role="menuitem" data-action="qr" class="show-qr"></button>
             </div>
         </div>
         <div id="main"></div>
@@ -63,10 +65,18 @@
                     <button type="button" role="menuitem" data-action="obsidian-new" class="add-to-obsidian"></button>
                     <button type="button" role="menuitem" data-action="obsidian-daily" class="add-to-daily-note"></button>
                     <button type="button" role="menuitem" data-action="download" class="download-markdown"></button>
+                    <button type="button" role="menuitem" data-action="qr" class="show-qr"></button>
                 </div>
             </div>
         </div>
         <div id="copy-status" role="status"></div>
+        <dialog id="qr-dialog" class="qr-dialog" aria-labelledby="qr-title">
+            <h2 id="qr-title" class="qr-title"></h2>
+            <div class="qr-code" role="img"></div>
+            <p class="qr-link"></p>
+            <p class="qr-password" hidden></p>
+            <button type="button" class="qr-close"></button>
+        </dialog>
         <div id="footer">
             <span id="language-select" role="group"><button type="button" data-lang="fi" lang="fi">FI</button> / <button type="button" data-lang="en" lang="en">EN</button></span> · <span id="app-name">Lappu</span>
         </div>

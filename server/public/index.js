@@ -1,4 +1,4 @@
-const { parseLocation, classifyId, decrypt, decryptBytes, cryptoAvailable, rewriteAttachmentSrc, attachmentUrl, attachmentMime, markdownForCopy, copyableUrl, formatParts, safeFileName, buildObsidianNewUrl, buildObsidianDailyUrl, shareLink, noteMetadata, buildDownloadHref, pageTitle, formatDate, formatTimestamp, sourceLink } = LappuViewer;
+const { parseLocation, classifyId, decrypt, decryptBytes, cryptoAvailable, rewriteAttachmentSrc, attachmentUrl, attachmentMime, markdownForCopy, copyableUrl, formatParts, safeFileName, buildObsidianNewUrl, buildObsidianDailyUrl, shareLink, noteMetadata, buildDownloadHref, pageTitle, formatDate, formatTimestamp, sourceLink, buildToc, qrPath } = LappuViewer;
 const LANGUAGE_STORAGE_KEY = "lappu-language";
 
 let md = markdownit({
@@ -61,6 +61,7 @@ let attachmentStatus = $("#attachment-status");
 let noteFooter = $("#note-footer");
 let noteEnd = $("#note-end");
 let copyStatus = $("#copy-status");
+let qrDialog = $("#qr-dialog");
 
 // the page title of the home page and of encrypted notes (not read from the page:
 // the server puts the note's title in the <title> of a plain share's /s/<id> page)
@@ -82,6 +83,8 @@ let currentNote = null;
 // the key of the transient copy confirmation that is shown, or null
 let copyStatusKey = null;
 let copyStatusTimer = null;
+// the element that had focus before the QR dialog opened (the menu's caret)
+let qrReturnFocus = null;
 
 // bumped on every display() so that late responses of an abandoned note are ignored
 let displayGeneration = 0;
@@ -89,6 +92,7 @@ let displayGeneration = 0;
 $("#language-select").on("click", "button", e => setLanguage(e.currentTarget.dataset.lang));
 // the same copy button and menu above the note and below it
 let copyTools = [$("#note-tools"), $("#note-tools-bottom")].map(setUpCopyTools);
+setUpQrDialog();
 renderAppName();
 applyLanguage();
 
@@ -205,6 +209,7 @@ function renderNote(t, id, kind, meta, password) {
     let env = kind === "valid" ? { attachments: { id, encrypted } } : {};
     // assigned via innerHTML (not jQuery .html()) so that nothing that slipped through sanitizing runs as a script
     main[0].innerHTML = DOMPurify.sanitize(md.render(t, env));
+    renderToc(id);
     // only shared notes get the copy button, not the home page
     currentNote = kind === "valid" ? { markdown: t, ctx: env.attachments } : null;
     setNoteToolsVisible(currentNote !== null);
@@ -310,6 +315,37 @@ function markImageBroken(img) {
     img.removeAttribute("src");
     img.classList.add("attachment-broken");
     img.title = t("imageFailed");
+}
+
+// A collapsible table of contents after the title (and the dates line, which
+// renderNoteFooter() puts right after the title). Its links are the same
+// "#<id>-<slug>" hashes as the heading permalinks, so they scroll without
+// reloading the note on both "/#<id>" and "/s/<id>" pages. Only headings with
+// such an id (from markdown-it-anchor) are listed.
+function renderToc(id) {
+    let prefix = `${id ?? ""}-`;
+    let headings = Array.from(main[0].querySelectorAll("h2, h3"))
+        .filter(h => h.id.startsWith(prefix))
+        .map(h => {
+            let copy = h.cloneNode(true);
+            for (let a of copy.querySelectorAll(".header-anchor"))
+                a.remove();
+            return { level: Number(h.tagName[1]), id: h.id, text: copy.textContent.trim() };
+        });
+    let toc = buildToc(headings);
+    if (!toc.length)
+        return;
+    let list = items => $("<ul>").append(items.map(item => $("<li>").append(
+        $("<a>").attr("href", `#${encodeURIComponent(item.id)}`).text(item.text),
+        item.children.length ? list(item.children) : null)));
+    let details = $("<details>").addClass("toc").append($("<summary>").addClass("toc-title").text(t("contents")), list(toc));
+    // open on wide screens, collapsed on narrow ones
+    details[0].open = window.matchMedia("(min-width: 48em)").matches;
+    let first = main.children().first();
+    if (first.is("h1, h2, h3, h4, h5, h6"))
+        first.after(details);
+    else
+        main.prepend(details);
 }
 
 // Shows the dates right away and the quote once it has loaded.
@@ -421,6 +457,12 @@ function renderStaticStrings() {
     $(".add-to-obsidian").text(t("addToObsidian"));
     $(".add-to-daily-note").text(t("addToDailyNote"));
     $(".download-markdown").text(t("downloadMarkdown"));
+    $(".show-qr").text(t("showQrCode"));
+    $(".toc-title").text(t("contents"));
+    qrDialog.find(".qr-title").text(t("qrCode"));
+    qrDialog.find(".qr-code").attr("aria-label", t("qrCode"));
+    qrDialog.find(".qr-password").text(t("qrHasPassword"));
+    qrDialog.find(".qr-close").text(t("close"));
     $("#language-select").attr("aria-label", t("language"));
     $("#language-select button").each((_, b) => b.setAttribute("aria-pressed", String(b.dataset.lang === language)));
 }
@@ -552,15 +594,21 @@ function setUpCopyTools(tools) {
 function setNoteToolsVisible(visible) {
     copyTools[0].setVisible(visible);
     noteEnd[0].hidden = !visible;
+    if (!visible && qrDialog[0].open)
+        qrDialog[0].close();
 }
 
 // action: "obsidian-new" creates a note with the content, "obsidian-daily" appends
 // a link line to today's daily note (the link keeps the key only if the opened link
 // had one), "download" saves the Markdown as a file. Attachment references become
-// absolute URLs, like in the copied Markdown.
+// absolute URLs, like in the copied Markdown. "qr" shows the link as a QR code.
 function runNoteAction(action) {
     if (!currentNote)
         return;
+    if (action === "qr") {
+        showQrDialog();
+        return;
+    }
     let title = currentNote.title || genericTitle;
     let href = window.location.href;
     let markdown = markdownForCopy(currentNote.markdown, currentNote.ctx, href);
@@ -574,6 +622,49 @@ function runNoteAction(action) {
             ? buildObsidianDailyUrl(title, shareLink(href, true))
             : buildObsidianNewUrl(title, markdown);
     }
+}
+
+// ---- QR code of the share link (a modal <dialog>: Esc and the close button close it) ----
+
+function setUpQrDialog() {
+    qrDialog.find(".qr-close").on("click", () => qrDialog[0].close());
+    qrDialog.on("close", () => {
+        if (qrReturnFocus && document.contains(qrReturnFocus))
+            qrReturnFocus.focus();
+        qrReturnFocus = null;
+    });
+}
+
+// The link keeps the key of an encrypted note: it is the link the reader shares anyway.
+function showQrDialog() {
+    if (typeof qrcode !== "function" || typeof qrDialog[0].showModal !== "function")
+        return;
+    let link = shareLink(window.location.href, true);
+    let qr = qrcode(0, "M");
+    qr.addData(link);
+    qr.make();
+    let size = qr.getModuleCount();
+    let margin = 4;
+    let ns = "http://www.w3.org/2000/svg";
+    let svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", `0 0 ${size + 2 * margin} ${size + 2 * margin}`);
+    svg.setAttribute("shape-rendering", "crispEdges");
+    svg.setAttribute("aria-hidden", "true");
+    // black on white in both themes, so that every scanner reads it
+    let background = document.createElementNS(ns, "rect");
+    background.setAttribute("width", "100%");
+    background.setAttribute("height", "100%");
+    background.setAttribute("fill", "#ffffff");
+    let modules = document.createElementNS(ns, "path");
+    modules.setAttribute("d", qrPath(size, (row, col) => qr.isDark(row, col), margin));
+    modules.setAttribute("fill", "#000000");
+    svg.append(background, modules);
+    qrDialog.find(".qr-code").empty().append(svg);
+    qrDialog.find(".qr-link").text(link);
+    qrDialog.find(".qr-password")[0].hidden = !currentLocation().key;
+    qrReturnFocus = document.activeElement;
+    qrDialog[0].showModal();
+    qrDialog.find(".qr-close")[0].focus();
 }
 
 // The app name in the bottom line links to the source code only when the server sets LAPPU_SOURCE_URL.
@@ -643,7 +734,7 @@ async function copyNote(format) {
 function noteForCopy(format) {
     let root = main[0].cloneNode(true);
     root.removeAttribute("id");
-    for (let el of root.querySelectorAll(".header-anchor, .note-byline, script, style"))
+    for (let el of root.querySelectorAll(".header-anchor, .note-byline, .toc, script, style"))
         el.remove();
     // KaTeX markup holds the formula twice (MathML and HTML), so keep one: MathML for
     // HTML, the visible text for plain text. DOMPurify has unwrapped the TeX

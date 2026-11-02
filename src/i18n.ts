@@ -85,7 +85,6 @@ const en = {
     "view.expired": "Expired {date}",
     "view.encrypted": "Encrypted",
 
-    "expiry.prompt": "Choose when the share expires",
     "expiry.default": "default",
     "expiry.never": "Never",
     "expiry.day": "1 day",
@@ -190,7 +189,6 @@ const fi: Record<TranslationKey, string> = {
     "view.expired": "Vanhentunut {date}",
     "view.encrypted": "Salattu",
 
-    "expiry.prompt": "Valitse, milloin jako vanhenee",
     "expiry.default": "oletus",
     "expiry.never": "Ei koskaan",
     "expiry.day": "1 päivä",

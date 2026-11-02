@@ -2,11 +2,13 @@
 package api
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -48,7 +50,10 @@ type Config struct {
 	TrustedProxies []netip.Prefix
 	QuotesFile     string
 	Static         fs.FS
-	Logger         *slog.Logger
+	// HideFooter hides the viewer's bottom line (credit, download, copy to
+	// Obsidian, language switch) by serving index.html with a body class.
+	HideFooter bool
+	Logger     *slog.Logger
 }
 
 type server struct {
@@ -74,7 +79,7 @@ func New(cfg Config) http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		text(w, http.StatusOK, "ok")
 	})
-	mux.Handle("/", static(cfg.Static))
+	mux.Handle("/", static(cfg.Static, cfg.HideFooter))
 	return s.logRequests(securityHeaders(mux))
 }
 
@@ -93,8 +98,27 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-func static(fsys fs.FS) http.Handler {
+// bodyMarker is replaced in index.html to hide the viewer footer.
+const bodyMarker = "<body>"
+
+// static serves the viewer files. With hideFooter, "/" is served from a copy of
+// index.html whose <body> carries the no-footer class; "/index.html" is still
+// redirected to "/" by the file server, so both paths get the same page.
+// It panics if index.html cannot be read or does not contain exactly one <body>,
+// so a changed viewer never silently shows the footer.
+func static(fsys fs.FS, hideFooter bool) http.Handler {
 	files := http.FileServerFS(fsys)
+	var index []byte
+	if hideFooter {
+		b, err := fs.ReadFile(fsys, "index.html")
+		if err != nil {
+			panic("hide footer: " + err.Error())
+		}
+		if n := bytes.Count(b, []byte(bodyMarker)); n != 1 {
+			panic(fmt.Sprintf("hide footer: index.html has %d %s tags, want exactly 1", n, bodyMarker))
+		}
+		index = bytes.Replace(b, []byte(bodyMarker), []byte(`<body class="no-footer">`), 1)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
@@ -104,6 +128,10 @@ func static(fsys fs.FS) http.Handler {
 		// No directory listings; "/" itself is served as index.html.
 		if r.URL.Path != "/" && strings.HasSuffix(r.URL.Path, "/") {
 			http.NotFound(w, r)
+			return
+		}
+		if index != nil && r.URL.Path == "/" {
+			http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(index))
 			return
 		}
 		files.ServeHTTP(w, r)

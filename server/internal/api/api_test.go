@@ -277,6 +277,55 @@ func TestStaticFiles(t *testing.T) {
 	}
 }
 
+func TestHideFooter(t *testing.T) {
+	page := fstest.MapFS{"index.html": {Data: []byte("<html><body><div id=\"footer\"></div></body></html>")}}
+	withPage := func(c *Config) { c.Static = page }
+
+	shown := newEnv(t, withPage)
+	if w := shown.do(req{method: "GET", target: "/"}); w.Code != 200 || strings.Contains(w.Body.String(), "no-footer") {
+		t.Errorf("default: %d %s", w.Code, w.Body)
+	}
+
+	hidden := newEnv(t, withPage, func(c *Config) { c.HideFooter = true })
+	w := hidden.do(req{method: "GET", target: "/"})
+	expect(t, w, 200, `<html><body class="no-footer"><div id="footer"></div></body></html>`)
+	if ct := w.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
+		t.Errorf("content-type %q", ct)
+	}
+	if w.Header().Get("Content-Security-Policy") != wantCSP {
+		t.Errorf("CSP = %q", w.Header().Get("Content-Security-Policy"))
+	}
+	if w := hidden.do(req{method: "HEAD", target: "/"}); w.Code != 200 || w.Body.Len() != 0 {
+		t.Errorf("HEAD: %d %q", w.Code, w.Body)
+	}
+	// Like the plain file server, /index.html redirects to the rewritten "/".
+	if w := hidden.do(req{method: "GET", target: "/index.html"}); w.Code != http.StatusMovedPermanently || w.Header().Get("Location") != "./" {
+		t.Errorf("/index.html: %d %v", w.Code, w.Header())
+	}
+	if w := hidden.do(req{method: "POST", target: "/"}); w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST: %d", w.Code)
+	}
+}
+
+func TestHideFooterNeedsOneBodyTag(t *testing.T) {
+	for name, html := range map[string]string{
+		"none": "<html>viewer</html>",
+		"two":  "<body><body>",
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("%s: no panic", name)
+				}
+			}()
+			newEnv(t, func(c *Config) {
+				c.Static = fstest.MapFS{"index.html": {Data: []byte(html)}}
+				c.HideFooter = true
+			})
+		}()
+	}
+}
+
 func TestSecurityHeadersEverywhere(t *testing.T) {
 	e := newEnv(t)
 	for _, target := range []string{"/", "/healthz", "/share.php?id=abcdef12", "/share.php?quote", "/nope"} {

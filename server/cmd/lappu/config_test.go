@@ -20,7 +20,7 @@ func TestConfigDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.Listen != ":80" || c.DataDir != "/var/www/data" || c.QuotesFile != "/var/www/quotes/quotes.csv" ||
-		c.Token != token || c.AllowAnonymous || c.MaxBodyBytes != 20<<20 {
+		c.Token != token || c.AllowAnonymous || c.MaxBodyBytes != 20<<20 || c.HideViewerFooter {
 		t.Errorf("defaults: %+v", c)
 	}
 	want := []string{"127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"}
@@ -74,6 +74,7 @@ func TestConfigErrors(t *testing.T) {
 		"both token sources":         {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_UPLOAD_TOKEN_FILE": "/x"},
 		"missing token file":         {"LAPPU_UPLOAD_TOKEN_FILE": "/does/not/exist"},
 		"bad anonymous flag":         {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_ALLOW_ANONYMOUS_UPLOADS": "yes please"},
+		"bad hide footer flag":       {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_HIDE_VIEWER_FOOTER": "maybe"},
 		"bad body limit":             {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_MAX_BODY_BYTES": "0"},
 		"bad attachment limit":       {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_MAX_ATTACHMENT_BYTES": "-1"},
 		"bad share attachment limit": {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_MAX_SHARE_ATTACHMENT_BYTES": "x"},
@@ -129,5 +130,12 @@ func TestConfigAttachmentLimits(t *testing.T) {
 		"LAPPU_MAX_ATTACHMENT_BYTES": "5", "LAPPU_MAX_SHARE_ATTACHMENT_BYTES": "9"}))
 	if err != nil || c.MaxAttachmentBytes != 5 || c.MaxShareAttachmentBytes != 9 {
 		t.Errorf("custom: %+v %v", c, err)
+	}
+}
+
+func TestConfigHideViewerFooter(t *testing.T) {
+	c, err := loadConfig(envFrom(map[string]string{"LAPPU_UPLOAD_TOKEN": token, "LAPPU_HIDE_VIEWER_FOOTER": "true"}))
+	if err != nil || !c.HideViewerFooter {
+		t.Errorf("%+v %v", c, err)
 	}
 }

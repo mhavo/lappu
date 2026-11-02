@@ -24,6 +24,7 @@ type config struct {
 	MaxAttachmentBytes      int64
 	MaxShareAttachmentBytes int64
 	TrustedProxies          []netip.Prefix
+	HideViewerFooter        bool
 }
 
 // envSuffixes are the configuration variables; each is read as LAPPU_<suffix>.
@@ -67,6 +68,9 @@ func loadConfig(getenv func(string) string) (config, error) {
 	var err error
 	if c.AllowAnonymous, err = strconv.ParseBool(get("LAPPU_ALLOW_ANONYMOUS_UPLOADS", "false")); err != nil {
 		return c, fmt.Errorf("LAPPU_ALLOW_ANONYMOUS_UPLOADS: %w", err)
+	}
+	if c.HideViewerFooter, err = strconv.ParseBool(get("LAPPU_HIDE_VIEWER_FOOTER", "false")); err != nil {
+		return c, fmt.Errorf("LAPPU_HIDE_VIEWER_FOOTER: %w", err)
 	}
 	if c.Token, err = loadToken(getenv("LAPPU_UPLOAD_TOKEN"), getenv("LAPPU_UPLOAD_TOKEN_FILE")); err != nil {
 		return c, err

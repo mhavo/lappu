@@ -49,6 +49,7 @@ func run(logger *slog.Logger) error {
 			TrustedProxies: cfg.TrustedProxies,
 			QuotesFile:     cfg.QuotesFile,
 			Static:         lappu.Public(),
+			HideFooter:     cfg.HideViewerFooter,
 			Logger:         logger,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,

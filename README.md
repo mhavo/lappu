@@ -72,6 +72,8 @@ The server listens on `127.0.0.1:8080`. Put a reverse proxy with TLS (for exampl
 | `LAPPU_MAX_SHARE_ATTACHMENT_BYTES` | `52428800` (50 MiB) | Maximum total size of the attachments of one share. |
 | `LAPPU_HIDE_VIEWER_FOOTER` | `false` | `true` hides the viewer's bottom line (FI / EN language switch and the app name). The dates, the quote and the copy buttons stay. |
 | `LAPPU_SOURCE_URL` | | An absolute http(s) URL, for example `https://github.com/mhavo/lappu`. When set, the app name in the viewer's bottom line links to it. |
+| `LAPPU_LOOKUP_FAILURE_LIMIT` | `30` | Reads of a share (`share.php` `?id`, `?meta`, `?att` and `/s/<id>`) that end in 404 or an invalid id, per client per 10 minutes. Above it the client gets 429 on those reads; the allowance refills gradually over the window. Makes guessing ids impractical. |
+| `LAPPU_READ_LIMIT` | `300` | All reads of shares (the same endpoints) per client per 5 minutes, then 429. |
 | `LAPPU_TRUSTED_PROXIES` | `127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7` | Comma-separated CIDRs or IPs whose `X-Forwarded-For` header is trusted for the client IP (rate limiting and logs). |
 
 The server refuses to start if no token is set and `LAPPU_ALLOW_ANONYMOUS_UPLOADS` is not `true`, if the token is shorter than 32 characters, or if any old `JSP_*` variable (the pre-rename names) is still set.
@@ -89,15 +91,28 @@ All calls go to `/share.php`, as with the PHP server. Write calls need `Authoriz
 | `GET ?att=<id>/<name>` | One attachment, or 404 |
 | `GET ?quote` | JSON `{"quote","source"}` |
 | `POST`, body `{"content", "expiresIn"?, "encrypted"?, "attachments"?}` | JSON `{"id","password","created","expires","encrypted","missing"}`; the password is returned only here |
-| `PATCH ?id=<id>`, header `Password`, body `{"content", "encrypted"?, "attachments"?}` | JSON `{"encrypted","missing"}`, or 400 / 401 / 404 |
+| `PATCH ?id=<id>`, header `Password`, body `{"content"?, "encrypted"?, "attachments"?, "expiresIn"?}` | JSON `{"encrypted","missing","expires"}`, or 400 / 401 / 404 |
 | `PUT ?att=<id>/<name>`, header `Password`, raw body | 200, or 400 / 401 / 404 / 413 |
 | `DELETE ?id=<id>`, header `Password` | 200, or 400 / 401 / 404 |
 
-- `expiresIn` is the lifetime in seconds (1 to 31536000); leave it out for a share that never expires. PATCH ignores it.
+- `expiresIn` is the lifetime in seconds (1 to 31536000), counted from the request; leave it out, or send `null` or `0`, for a share that never expires. In PATCH, leaving it out keeps the current expiry, and `null` or `0` removes it. An invalid value returns 400 `{"error":"Invalid expiresIn"}`.
+- PATCH without `content` changes only the expiry: content, `encrypted` and attachments stay as they are. `encrypted` or `attachments` without `content` returns 400, as does a body with neither `content` nor `expiresIn`. An expired share returns 404 and cannot be revived. The reply always has `expires` (unix seconds or `null`), which clients use to tell that the server supports changing the expiry.
 - `encrypted: true` means `content` is SimpleTextCrypt ciphertext. The server rejects content that does not look like ciphertext.
 - `attachments` lists the attachment names the share uses, in the form `<sha256>.<ext>`. The reply lists in `missing` the ones the server does not have yet, and the plugin uploads those with `PUT`. The server checks each file's hash and, for plain shares, that its content matches the extension. Attachments no longer listed are deleted.
 
+The viewer is served at `/` and `/s/<id>` (see [Links](#links)).
+
+Reads of shares are limited per client (see `LAPPU_LOOKUP_FAILURE_LIMIT` and `LAPPU_READ_LIMIT`) and get 429 above the limits; a request with the valid upload token is never limited, and an invalid token on a read is ignored. The quote, `/healthz`, `/robots.txt` and the viewer's own files are not limited.
+
 A missing or wrong token returns `401 Invalid token`, and a wrong share password returns `401 Unauthorized`. Too many failed attempts return 429, and an oversized body returns 413.
+
+### Links
+
+- `/s/<id>` is the preferred link for plain shares. Its page carries the note's title and a short plain-text excerpt (`og:title`, `og:description` and related tags) for link previews in chat apps. An encrypted share gets a generic page without note metadata, and an invalid, missing or expired id a generic page with status 404.
+- Encrypted shares keep the `/#<id>~<key>` form, so the key never reaches the server. `/s/<id>#~<key>` also works.
+- Old links `/#<id>` and heading anchors `/#<id>-<slug>` keep working.
+- Every response has `X-Robots-Tag: noindex, nofollow, noarchive`, the viewer has a matching robots meta tag, and `/robots.txt` disallows everything except `/s/` for the common link-preview bots. Note content is only rendered by the viewer's JavaScript.
+- The viewer loads its files and the API from absolute paths (`/share.php`, `/index.js`, ...), so the server must be served at the root of its host, not under a sub-path.
 
 ## Migrating from the PHP server
 

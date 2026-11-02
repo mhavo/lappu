@@ -32,6 +32,17 @@ const (
 	anonCreateWindow = time.Hour
 )
 
+// Per-client read limits (share.php ?id, ?meta and ?att, and /s/<id>), the
+// defaults of Config.LookupFailureLimit and Config.ReadLimit: lookups that end
+// in 404 or an invalid id (id enumeration), and all reads. Requests with the
+// upload token are never limited.
+const (
+	DefaultLookupFailureLimit = 30
+	lookupFailureWindow       = 10 * time.Minute
+	DefaultReadLimit          = 300
+	readWindow                = 5 * time.Minute
+)
+
 // viewerCSP limits jsDelivr to npm packages and the highlight.js repo
 // (not arbitrary GitHub repos via /gh/).
 const viewerCSP = "default-src 'none'; " +
@@ -57,7 +68,13 @@ type Config struct {
 	// SourceURL, when set, makes the app name in the viewer's bottom line a link
 	// to it (an absolute http(s) URL, validated by the caller).
 	SourceURL string
-	Logger    *slog.Logger
+	// LookupFailureLimit and ReadLimit are the per-client read limits
+	// (0 = DefaultLookupFailureLimit per 10 minutes, DefaultReadLimit per 5 minutes).
+	LookupFailureLimit int
+	ReadLimit          int
+	Logger             *slog.Logger
+	// now is the limiters' clock (tests); nil = time.Now.
+	now func() time.Time
 }
 
 type server struct {
@@ -65,6 +82,8 @@ type server struct {
 	tokenHash [32]byte
 	limiter   *limiter // failed auth
 	creates   *limiter // anonymous creates
+	lookups   *limiter // reads of missing or invalid ids
+	reads     *limiter // all limited reads
 }
 
 // New returns the complete HTTP handler.
@@ -72,18 +91,35 @@ func New(cfg Config) http.Handler {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
+	if cfg.now == nil {
+		cfg.now = time.Now
+	}
+	if cfg.LookupFailureLimit <= 0 {
+		cfg.LookupFailureLimit = DefaultLookupFailureLimit
+	}
+	if cfg.ReadLimit <= 0 {
+		cfg.ReadLimit = DefaultReadLimit
+	}
 	s := &server{
 		Config:    cfg,
 		tokenHash: sha256.Sum256([]byte(cfg.Token)),
-		limiter:   newLimiter(failureBurst, failureWindow, time.Now),
-		creates:   newLimiter(anonCreateBurst, anonCreateWindow, time.Now),
+		limiter:   newLimiter(failureBurst, failureWindow, cfg.now),
+		creates:   newLimiter(anonCreateBurst, anonCreateWindow, cfg.now),
+		lookups:   newLimiter(cfg.LookupFailureLimit, lookupFailureWindow, cfg.now),
+		reads:     newLimiter(cfg.ReadLimit, readWindow, cfg.now),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/share.php", s.share)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		text(w, http.StatusOK, "ok")
 	})
-	mux.Handle("/", static(cfg.Static, cfg.HideFooter, cfg.SourceURL))
+	page, rewritten := viewerIndex(cfg.Static, cfg.HideFooter, cfg.SourceURL)
+	var index []byte
+	if rewritten {
+		index = page
+	}
+	mux.Handle("/", static(cfg.Static, index))
+	mux.Handle("/s/", s.limitReads(s.sharePage(page)))
 	return s.logRequests(securityHeaders(mux))
 }
 
@@ -93,6 +129,8 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("X-Frame-Options", "DENY")
+		// Shares are private links; see also robots.txt.
+		h.Set("X-Robots-Tag", "noindex, nofollow, noarchive")
 		if r.URL.Path == "/share.php" || r.URL.Path == "/healthz" {
 			h.Set("Content-Security-Policy", apiCSP)
 		} else {
@@ -105,32 +143,37 @@ func securityHeaders(next http.Handler) http.Handler {
 // bodyMarker is replaced in index.html to pass the viewer settings.
 const bodyMarker = "<body>"
 
-// static serves the viewer files. With hideFooter or a sourceURL, "/" is served
-// from a copy of index.html whose <body> carries the no-footer class and/or a
-// data-source-url attribute; "/index.html" is still redirected to "/" by the
-// file server, so both paths get the same page.
-// It panics if index.html cannot be read or does not contain exactly one <body>,
-// so a changed viewer never silently ignores the settings.
-func static(fsys fs.FS, hideFooter bool, sourceURL string) http.Handler {
-	files := http.FileServerFS(fsys)
-	var index []byte
-	if hideFooter || sourceURL != "" {
-		b, err := fs.ReadFile(fsys, "index.html")
-		if err != nil {
-			panic("viewer settings: " + err.Error())
-		}
-		if n := bytes.Count(b, []byte(bodyMarker)); n != 1 {
-			panic(fmt.Sprintf("viewer settings: index.html has %d %s tags, want exactly 1", n, bodyMarker))
-		}
-		body := "<body"
-		if hideFooter {
-			body += ` class="no-footer"`
-		}
-		if sourceURL != "" {
-			body += ` data-source-url="` + html.EscapeString(sourceURL) + `"`
-		}
-		index = bytes.Replace(b, []byte(bodyMarker), []byte(body+">"), 1)
+// viewerIndex reads index.html and, with hideFooter or a sourceURL, gives its
+// <body> the no-footer class and/or a data-source-url attribute (rewritten
+// reports whether it did). It panics if index.html cannot be read or, when it
+// has to be rewritten, does not contain exactly one <body>, so a changed
+// viewer never silently ignores the settings.
+func viewerIndex(fsys fs.FS, hideFooter bool, sourceURL string) (page []byte, rewritten bool) {
+	b, err := fs.ReadFile(fsys, "index.html")
+	if err != nil {
+		panic("viewer: " + err.Error())
 	}
+	if !hideFooter && sourceURL == "" {
+		return b, false
+	}
+	if n := bytes.Count(b, []byte(bodyMarker)); n != 1 {
+		panic(fmt.Sprintf("viewer settings: index.html has %d %s tags, want exactly 1", n, bodyMarker))
+	}
+	body := "<body"
+	if hideFooter {
+		body += ` class="no-footer"`
+	}
+	if sourceURL != "" {
+		body += ` data-source-url="` + html.EscapeString(sourceURL) + `"`
+	}
+	return bytes.Replace(b, []byte(bodyMarker), []byte(body+">"), 1), true
+}
+
+// static serves the viewer files. A non-nil index (index.html with the viewer
+// settings) is served for "/"; "/index.html" is still redirected to "/" by the
+// file server, so both paths get the same page.
+func static(fsys fs.FS, index []byte) http.Handler {
+	files := http.FileServerFS(fsys)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
@@ -154,16 +197,20 @@ func (s *server) share(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
-		switch {
-		case q.Has("quote"):
+		if q.Has("quote") {
 			s.quote(w)
-		case q.Has("att"):
-			s.getAttachment(w, r, q.Get("att"))
-		case q.Has("meta"):
-			s.meta(w, q.Get("id"))
-		default:
-			s.get(w, q.Get("id"))
+			return
 		}
+		s.limitReads(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case q.Has("att"):
+				s.getAttachment(w, r, q.Get("att"))
+			case q.Has("meta"):
+				s.meta(w, q.Get("id"))
+			default:
+				s.get(w, q.Get("id"))
+			}
+		})).ServeHTTP(w, r)
 	case http.MethodPut:
 		if !q.Has("att") {
 			text(w, http.StatusMethodNotAllowed, "Unsupported method")
@@ -266,6 +313,30 @@ func isHeader(rec []string) bool {
 		(strings.EqualFold(rec[1], "author") || strings.EqualFold(rec[1], "source"))
 }
 
+// limitReads applies the per-client read limits to a read of a share: a
+// client over either limit gets 429, and a read that ends in 404 or 400 (an
+// invalid or missing id) counts as a lookup failure. A valid upload token
+// exempts the request; an invalid one is ignored, as reads need no token.
+func (s *server) limitReads(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.validToken(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ip := limitKey(clientIP(r, s.TrustedProxies))
+		if s.lookups.blocked(ip) || s.reads.blocked(ip) {
+			text(w, http.StatusTooManyRequests, "Too many requests")
+			return
+		}
+		s.reads.charge(ip)
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		if rec.status == http.StatusNotFound || rec.status == http.StatusBadRequest {
+			s.lookups.charge(ip)
+		}
+	})
+}
+
 // gate applies the token check and failed-auth rate limiting shared by all
 // writes. ok is false when the response has been written.
 func (s *server) gate(w http.ResponseWriter, r *http.Request) (ip string, trusted, ok bool) {
@@ -316,7 +387,7 @@ func (s *server) write(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 		var share store.Share
-		if share, err = s.Store.CreateFull(req.content, req.expiresIn, req.encrypted != nil && *req.encrypted, req.attachments); err == nil {
+		if share, err = s.Store.CreateFull(*req.content, req.expiresIn, req.encrypted != nil && *req.encrypted, req.attachments); err == nil {
 			if !trusted {
 				s.creates.charge(ip)
 			}
@@ -325,7 +396,11 @@ func (s *server) write(w http.ResponseWriter, r *http.Request) {
 		}
 	case http.MethodPatch:
 		var res store.UpdateResult
-		if res, err = s.Store.UpdateFull(id, password, req.content, req.encrypted, req.attachments); err == nil {
+		patch := store.Patch{Content: req.content, Encrypted: req.encrypted, Attachments: req.attachments}
+		if req.setExpiry {
+			patch.ExpiresIn = &req.expiresIn
+		}
+		if res, err = s.Store.Patch(id, password, patch); err == nil {
 			writeJSON(w, http.StatusOK, res)
 			return
 		}
@@ -335,7 +410,7 @@ func (s *server) write(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, store.ErrUnauthorized) && !trusted {
 		s.limiter.charge(ip)
 	}
-	if errors.Is(err, store.ErrNotCiphertext) || errors.Is(err, store.ErrInvalidAttachments) {
+	if errors.Is(err, store.ErrNotCiphertext) || errors.Is(err, store.ErrInvalidAttachments) || errors.Is(err, store.ErrNoContent) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -463,17 +538,19 @@ func (s *server) validToken(r *http.Request) bool {
 	return subtle.ConstantTimeCompare(sum[:], s.tokenHash[:]) == 1
 }
 
-// parseExpiresIn accepts an absent field, null or 0 (never expires) and
-// integers from 1 to store.MaxExpiresIn seconds.
-func parseExpiresIn(raw json.RawMessage) (int64, bool) {
-	if len(raw) == 0 || string(raw) == "null" {
-		return 0, true
+// parseExpiresIn accepts an absent field (set is false), null or 0 (never
+// expires) and integers from 1 to store.MaxExpiresIn seconds.
+func parseExpiresIn(raw json.RawMessage) (n int64, set, ok bool) {
+	if len(raw) == 0 {
+		return 0, false, true
 	}
-	var n int64
+	if string(raw) == "null" {
+		return 0, true, true
+	}
 	if err := json.Unmarshal(raw, &n); err != nil || n < 0 || n > store.MaxExpiresIn {
-		return 0, false
+		return 0, false, false
 	}
-	return n, true
+	return n, true, true
 }
 
 // parseEncrypted accepts an absent field (nil: unchanged / false) or a JSON
@@ -491,14 +568,16 @@ func parseEncrypted(raw json.RawMessage) (*bool, bool) {
 
 // writeBody is the decoded JSON body of POST and PATCH.
 type writeBody struct {
-	content     string
+	content     *string // nil only for an expiry-only PATCH
 	expiresIn   int64
+	setExpiry   bool // expiresIn was given (null counts)
 	encrypted   *bool
 	attachments []string // nil = absent
 }
 
 // readBody decodes and validates the request body, answering with an error
-// itself when it is bad. expiresIn is only read for POST (PATCH ignores it).
+// itself when it is bad. POST needs content; PATCH needs content or
+// expiresIn, and encrypted/attachments only go with content.
 func (s *server) readBody(w http.ResponseWriter, r *http.Request) (writeBody, bool) {
 	var body struct {
 		Content     *string         `json:"content"`
@@ -511,11 +590,11 @@ func (s *server) readBody(w http.ResponseWriter, r *http.Request) (writeBody, bo
 		text(w, http.StatusRequestEntityTooLarge, "Request too large")
 		return writeBody{}, false
 	}
-	if err != nil || body.Content == nil {
+	if err != nil || (body.Content == nil && (r.Method == http.MethodPost || len(body.ExpiresIn) == 0)) {
 		text(w, http.StatusBadRequest, "No content")
 		return writeBody{}, false
 	}
-	req := writeBody{content: *body.Content}
+	req := writeBody{content: body.Content}
 	var ok bool
 	if req.encrypted, ok = parseEncrypted(body.Encrypted); !ok {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid encrypted"})
@@ -525,11 +604,13 @@ func (s *server) readBody(w http.ResponseWriter, r *http.Request) (writeBody, bo
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": store.ErrInvalidAttachments.Error()})
 		return writeBody{}, false
 	}
-	if r.Method == http.MethodPost {
-		if req.expiresIn, ok = parseExpiresIn(body.ExpiresIn); !ok {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid expiresIn"})
-			return writeBody{}, false
-		}
+	if req.expiresIn, req.setExpiry, ok = parseExpiresIn(body.ExpiresIn); !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid expiresIn"})
+		return writeBody{}, false
+	}
+	if req.content == nil && (req.encrypted != nil || req.attachments != nil) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "encrypted and attachments need content"})
+		return writeBody{}, false
 	}
 	return req, true
 }

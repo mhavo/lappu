@@ -8,6 +8,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/mhavo/lappu/server/internal/api"
 )
 
 const minTokenLength = 32
@@ -27,6 +29,9 @@ type config struct {
 	TrustedProxies          []netip.Prefix
 	HideViewerFooter        bool
 	SourceURL               string
+	// Per-client read limits (see api.Config).
+	LookupFailureLimit int
+	ReadLimit          int
 }
 
 // envSuffixes are the configuration variables; each is read as LAPPU_<suffix>.
@@ -99,6 +104,16 @@ func loadConfig(getenv func(string) string) (config, error) {
 	if c.MaxShareAttachmentBytes, err = positiveInt(get, "LAPPU_MAX_SHARE_ATTACHMENT_BYTES", 50<<20); err != nil {
 		return c, err
 	}
+
+	n, err := positiveInt(get, "LAPPU_LOOKUP_FAILURE_LIMIT", api.DefaultLookupFailureLimit)
+	if err != nil {
+		return c, err
+	}
+	c.LookupFailureLimit = int(n)
+	if n, err = positiveInt(get, "LAPPU_READ_LIMIT", api.DefaultReadLimit); err != nil {
+		return c, err
+	}
+	c.ReadLimit = int(n)
 
 	for p := range strings.SplitSeq(get("LAPPU_TRUSTED_PROXIES", defaultTrustedProxies), ",") {
 		p = strings.TrimSpace(p)

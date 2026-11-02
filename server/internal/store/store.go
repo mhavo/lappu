@@ -35,6 +35,9 @@ var (
 	ErrNotCiphertext = errors.New("encrypted content must be SimpleTextCrypt base64 text")
 	// ErrInvalidAttachments is returned for a bad attachment name or too many names.
 	ErrInvalidAttachments = errors.New("invalid attachments")
+	// ErrNoContent is returned for a patch without content that is not an
+	// expiry-only change (encrypted and attachments need content).
+	ErrNoContent = errors.New("no content")
 	// ErrNotDeclared is returned when an uploaded attachment is not in the share's list.
 	ErrNotDeclared = errors.New("attachment not declared")
 	// ErrHashMismatch is returned when the uploaded bytes do not hash to the name.
@@ -189,6 +192,7 @@ type Share struct {
 type UpdateResult struct {
 	Encrypted bool     `json:"encrypted"`
 	Missing   []string `json:"missing"`
+	Expires   *int64   `json:"expires"` // unix seconds, null = never
 }
 
 // MaxExpiresIn is the longest allowed lifetime of a share, in seconds (365 days).
@@ -346,13 +350,36 @@ func (s *Store) UpdateWith(id, password, content string, encrypted *bool) error 
 // unchanged). Stored files no longer declared are deleted, and all of them
 // when the encrypted flag flips, since stored bytes are in the old form.
 func (s *Store) UpdateFull(id, password, content string, encrypted *bool, attachments []string) (UpdateResult, error) {
+	return s.Patch(id, password, Patch{Content: &content, Encrypted: encrypted, Attachments: attachments})
+}
+
+// Patch is a partial update of a share; nil fields are left unchanged.
+// Encrypted and Attachments can only be set together with Content.
+type Patch struct {
+	Content     *string
+	Encrypted   *bool
+	Attachments []string
+	// ExpiresIn sets a new lifetime counted from now (0 = never expires);
+	// the caller checks it against MaxExpiresIn.
+	ExpiresIn *int64
+}
+
+// Patch applies p like UpdateFull and, with ExpiresIn, changes the expiry.
+// Expired shares are not found and cannot be revived.
+func (s *Store) Patch(id, password string, p Patch) (UpdateResult, error) {
 	if !ValidID(id) {
 		return UpdateResult{}, ErrInvalidID
 	}
+	if p.Content == nil && (p.Encrypted != nil || p.Attachments != nil) {
+		return UpdateResult{}, ErrNoContent
+	}
+	if p.Content == nil && p.ExpiresIn == nil {
+		return UpdateResult{}, ErrNoContent
+	}
 	var names []string
-	if attachments != nil {
+	if p.Attachments != nil {
 		var err error
-		if names, err = normalizeAttachments(attachments); err != nil {
+		if names, err = normalizeAttachments(p.Attachments); err != nil {
 			return UpdateResult{}, err
 		}
 	}
@@ -361,26 +388,38 @@ func (s *Store) UpdateFull(id, password, content string, encrypted *bool, attach
 	if err != nil {
 		return UpdateResult{}, err
 	}
+	now := s.now().Unix()
+	if p.ExpiresIn != nil {
+		m.Expires = nil
+		if *p.ExpiresIn > 0 {
+			exp := now + *p.ExpiresIn
+			m.Expires = &exp
+		}
+	}
 	flipped := false
-	if encrypted != nil {
-		flipped = m.Encrypted != *encrypted
-		m.Encrypted = *encrypted
+	if p.Content != nil {
+		if p.Encrypted != nil {
+			flipped = m.Encrypted != *p.Encrypted
+			m.Encrypted = *p.Encrypted
+		}
+		if m.Encrypted && !validCiphertext(*p.Content) {
+			return UpdateResult{}, ErrNotCiphertext
+		}
+		if p.Attachments != nil {
+			m.Attachments = names
+		}
+		if err := s.writeContent(id, *p.Content); err != nil {
+			return UpdateResult{}, err
+		}
+		m.Updated = now
 	}
-	if m.Encrypted && !validCiphertext(content) {
-		return UpdateResult{}, ErrNotCiphertext
-	}
-	if attachments != nil {
-		m.Attachments = names
-	}
-	if err := s.writeContent(id, content); err != nil {
-		return UpdateResult{}, err
-	}
-	m.Updated = s.now().Unix()
 	if err := s.writeMeta(id, m); err != nil {
 		return UpdateResult{}, err
 	}
-	s.pruneAttachments(id, m.Attachments, flipped)
-	return UpdateResult{Encrypted: m.Encrypted, Missing: s.missing(id, m.Attachments)}, nil
+	if p.Content != nil {
+		s.pruneAttachments(id, m.Attachments, flipped)
+	}
+	return UpdateResult{Encrypted: m.Encrypted, Missing: s.missing(id, m.Attachments), Expires: m.Expires}, nil
 }
 
 func (s *Store) Delete(id, password string) error {

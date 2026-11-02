@@ -152,3 +152,20 @@ func TestConfigSourceURL(t *testing.T) {
 		t.Errorf("default: %+v %v", c, err)
 	}
 }
+
+func TestConfigReadLimits(t *testing.T) {
+	c, err := loadConfig(envFrom(map[string]string{"LAPPU_UPLOAD_TOKEN": token}))
+	if err != nil || c.LookupFailureLimit != 30 || c.ReadLimit != 300 {
+		t.Errorf("defaults: %+v %v", c, err)
+	}
+	c, err = loadConfig(envFrom(map[string]string{"LAPPU_UPLOAD_TOKEN": token,
+		"LAPPU_LOOKUP_FAILURE_LIMIT": "5", "LAPPU_READ_LIMIT": "1000"}))
+	if err != nil || c.LookupFailureLimit != 5 || c.ReadLimit != 1000 {
+		t.Errorf("custom: %+v %v", c, err)
+	}
+	for _, v := range []string{"0", "-1", "x"} {
+		if _, err := loadConfig(envFrom(map[string]string{"LAPPU_UPLOAD_TOKEN": token, "LAPPU_READ_LIMIT": v})); err == nil {
+			t.Errorf("LAPPU_READ_LIMIT=%s accepted", v)
+		}
+	}
+}

@@ -427,3 +427,77 @@ func TestContentRefusedWhenMetaUnreadable(t *testing.T) {
 		t.Fatalf("Content with corrupt meta: err = %v, want a non-NotFound error", err)
 	}
 }
+
+func TestPatchChangesExpiry(t *testing.T) {
+	s, _ := newStore(t)
+	now := fakeClock(s, 1000)
+	share, err := s.Create("x", 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := func(n int64) *int64 { return &n }
+
+	*now = 1030
+	res, err := s.Patch(share.ID, share.Password, Patch{ExpiresIn: set(100)})
+	if err != nil || res.Expires == nil || *res.Expires != 1130 {
+		t.Fatalf("extend: %+v %v", res, err)
+	}
+	if c, err := s.Content(share.ID); err != nil || string(c) != "x" {
+		t.Errorf("expiry-only patch changed content: %q %v", c, err)
+	}
+	m, _ := s.Meta(share.ID)
+	if m.Expires == nil || *m.Expires != 1130 || m.Updated != 1000 {
+		t.Errorf("meta: %+v", m)
+	}
+
+	res, err = s.Patch(share.ID, share.Password, Patch{ExpiresIn: set(0)})
+	if err != nil || res.Expires != nil {
+		t.Fatalf("never: %+v %v", res, err)
+	}
+	*now = 1 << 40
+	if _, err := s.Content(share.ID); err != nil {
+		t.Errorf("never-expiring share: %v", err)
+	}
+
+	// content and expiry together
+	content := "y"
+	if res, err = s.Patch(share.ID, share.Password, Patch{Content: &content, ExpiresIn: set(5)}); err != nil || *res.Expires != (1<<40)+5 {
+		t.Fatalf("both: %+v %v", res, err)
+	}
+	if c, _ := s.Content(share.ID); string(c) != "y" {
+		t.Errorf("content %q", c)
+	}
+
+	// expired shares cannot be revived
+	*now += 5
+	if _, err := s.Patch(share.ID, share.Password, Patch{ExpiresIn: set(0)}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("revive: %v", err)
+	}
+}
+
+func TestPatchKeepsExpiryAndRejectsBadCombinations(t *testing.T) {
+	s, _ := newStore(t)
+	fakeClock(s, 1000)
+	share, _ := s.Create("x", 60)
+	res, err := s.UpdateFull(share.ID, share.Password, "y", nil, nil)
+	if err != nil || res.Expires == nil || *res.Expires != 1060 {
+		t.Fatalf("content-only: %+v %v", res, err)
+	}
+	enc := true
+	for name, p := range map[string]Patch{
+		"empty":                       {},
+		"encrypted without content":   {Encrypted: &enc},
+		"attachments without content": {Attachments: []string{}},
+	} {
+		if _, err := s.Patch(share.ID, share.Password, p); !errors.Is(err, ErrNoContent) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	never := int64(0)
+	if _, err := s.Patch(share.ID, "wrong", Patch{ExpiresIn: &never}); !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("wrong password: %v", err)
+	}
+	if m, _ := s.Meta(share.ID); m.Expires == nil || *m.Expires != 1060 {
+		t.Errorf("rejected patches changed the expiry: %v", m.Expires)
+	}
+}

@@ -1,0 +1,14 @@
+# Shares are private links: nothing here is meant to be indexed.
+# Link-preview bots may fetch share pages (/s/<id>) to show a title and excerpt.
+User-agent: TelegramBot
+User-agent: WhatsApp
+User-agent: facebookexternalhit
+User-agent: Twitterbot
+User-agent: Slackbot-LinkExpanding
+User-agent: Discordbot
+User-agent: LinkedInBot
+Allow: /s/
+Disallow: /
+
+User-agent: *
+Disallow: /

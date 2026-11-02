@@ -295,7 +295,7 @@ test("attachmentMime maps the extension and rejects invalid names", () => {
 });
 
 test("attachmentUrl is built only from a valid id and name", () => {
-    assert.equal(lib.attachmentUrl("abcd1234", `${H}.png`), `share.php?att=abcd1234/${H}.png`);
+    assert.equal(lib.attachmentUrl("abcd1234", `${H}.png`), `/share.php?att=abcd1234/${H}.png`);
     assert.equal(lib.attachmentUrl("abcd1234&x=1", `${H}.png`), null);
     assert.equal(lib.attachmentUrl("abcd1234", `${H}.png&x=1`), null);
     assert.equal(lib.attachmentUrl(undefined, `${H}.png`), null);
@@ -309,7 +309,7 @@ test("rewriteAttachmentSrc leaves other sources alone", () => {
 
 test("rewriteAttachmentSrc points an unencrypted attachment at the server", () => {
     assert.deepEqual(lib.rewriteAttachmentSrc(`lappu-att:${H}.webp`, { id: "abcd1234", encrypted: false }),
-        { src: `share.php?att=abcd1234/${H}.webp`, name: null });
+        { src: `/share.php?att=abcd1234/${H}.webp`, name: null });
 });
 
 test("rewriteAttachmentSrc uses a placeholder and the name for encrypted shares", () => {
@@ -327,7 +327,7 @@ test("rewriteAttachmentSrc never lets a bad name or a missing share produce a UR
     assert.deepEqual(lib.rewriteAttachmentSrc(`lappu-att:${H}.png`, { id: "bad id", encrypted: false }), blank);
     // the scheme match is case-insensitive, but the name is still validated
     assert.deepEqual(lib.rewriteAttachmentSrc(`LAPPU-ATT:${H}.png`, ctx),
-        { src: `share.php?att=abcd1234/${H}.png`, name: null });
+        { src: `/share.php?att=abcd1234/${H}.png`, name: null });
 });
 
 // Encrypts like the plugin does for attachments: IV (12) || ciphertext || tag (16), binary.
@@ -377,8 +377,8 @@ const BASE = "https://notes.example/view/?x=1#abcd1234-heading";
 test("markdownForCopy makes attachment references of a plain share absolute", () => {
     const md = `# T\n\n![a pic](lappu-att:${H}.png) and ![b](LAPPU-ATT:${H}.webp "title")\n`;
     assert.equal(lib.markdownForCopy(md, { id: "abcd1234", encrypted: false }, BASE),
-        `# T\n\n![a pic](https://notes.example/view/share.php?att=abcd1234/${H}.png) and ` +
-        `![b](https://notes.example/view/share.php?att=abcd1234/${H}.webp "title")\n`);
+        `# T\n\n![a pic](https://notes.example/share.php?att=abcd1234/${H}.png) and ` +
+        `![b](https://notes.example/share.php?att=abcd1234/${H}.webp "title")\n`);
 });
 
 test("markdownForCopy leaves encrypted shares, other notes and invalid references alone", () => {
@@ -405,4 +405,40 @@ test("copy translations exist in every language", () => {
     for (const lang of i18n.languages)
         for (const key of ["copy", "copyOptions", "copyMarkdown", "copyPlainText", "copyHtml", "copied", "copyFailed", "copyHtmlUnsupported"])
             assert.notEqual(i18n.translate(lang, key), key, `${lang} ${key}`);
+});
+
+test("parseLocation reads legacy pages from the hash", () => {
+    assert.deepEqual(lib.parseLocation("/", "#abcd1234~k-head"), { id: "abcd1234", key: "k", anchor: "head", sharePath: false });
+    assert.deepEqual(lib.parseLocation("/", ""), { id: undefined, key: null, anchor: null, sharePath: false });
+    assert.deepEqual(lib.parseLocation("/index.html", "#abcd1234"), { id: "abcd1234", key: null, anchor: null, sharePath: false });
+});
+
+test("parseLocation takes the id of a share page from the path", () => {
+    const at = hash => lib.parseLocation("/s/abcd1234", hash);
+    assert.deepEqual(at(""), { id: "abcd1234", key: null, anchor: null, sharePath: true });
+    assert.deepEqual(at("#"), { id: "abcd1234", key: null, anchor: null, sharePath: true });
+    // heading permalinks and footnotes are "#<id>-<slug>"
+    assert.deepEqual(at("#abcd1234-my-head"), { id: "abcd1234", key: null, anchor: "my-head", sharePath: true });
+    assert.deepEqual(at("#-my-head"), { id: "abcd1234", key: null, anchor: "my-head", sharePath: true });
+    assert.deepEqual(at("#~a%2Db-sec"), { id: "abcd1234", key: "a-b", anchor: "sec", sharePath: true });
+    assert.deepEqual(at("#abcd1234~key"), { id: "abcd1234", key: "key", anchor: null, sharePath: true });
+    // a hash naming another share is read as a legacy link to it
+    assert.deepEqual(at("#efgh5678-x"), { id: "efgh5678", key: null, anchor: "x", sharePath: false });
+    // invalid ids in the path are left to classifyId
+    assert.equal(lib.parseLocation("/s/<b>", "").id, "<b>");
+    assert.equal(lib.classifyId(lib.parseLocation("/s/", "").id), "home");
+    assert.equal(lib.parseLocation("/s/abcd1234/x", "").sharePath, false);
+});
+
+test("shareLink keeps the /s/<id> form on share pages", () => {
+    assert.equal(lib.shareLink("https://notes.example/s/abcDEF12#abcDEF12-heading", false), "https://notes.example/s/abcDEF12");
+    assert.equal(lib.shareLink("https://notes.example/s/abcDEF12", true), "https://notes.example/s/abcDEF12");
+    assert.equal(lib.shareLink("https://notes.example/s/abcDEF12#~a%2Db%7Ec-head", true), "https://notes.example/s/abcDEF12#~a%2Db%7Ec");
+    assert.equal(lib.shareLink("https://notes.example/s/abcDEF12#~secret", false), "https://notes.example/s/abcDEF12");
+});
+
+test("attachment URLs work from share pages", () => {
+    const md = `![x](lappu-att:${H}.png)`;
+    assert.equal(lib.markdownForCopy(md, { id: "abcd1234", encrypted: false }, "https://notes.example/s/abcd1234#abcd1234-h"),
+        `![x](https://notes.example/share.php?att=abcd1234/${H}.png)`);
 });

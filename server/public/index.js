@@ -1,4 +1,4 @@
-const { parseHash, getIdFromHash, classifyId, decrypt, decryptBytes, cryptoAvailable, rewriteAttachmentSrc, attachmentUrl, attachmentMime, markdownForCopy, copyableUrl, formatParts, safeFileName, buildObsidianNewUrl, buildObsidianDailyUrl, shareLink, noteMetadata, buildDownloadHref, pageTitle, formatDate, formatTimestamp, sourceLink } = LappuViewer;
+const { parseLocation, classifyId, decrypt, decryptBytes, cryptoAvailable, rewriteAttachmentSrc, attachmentUrl, attachmentMime, markdownForCopy, copyableUrl, formatParts, safeFileName, buildObsidianNewUrl, buildObsidianDailyUrl, shareLink, noteMetadata, buildDownloadHref, pageTitle, formatDate, formatTimestamp, sourceLink } = LappuViewer;
 const LANGUAGE_STORAGE_KEY = "lappu-language";
 
 let md = markdownit({
@@ -62,8 +62,9 @@ let noteFooter = $("#note-footer");
 let noteEnd = $("#note-end");
 let copyStatus = $("#copy-status");
 
-// the page title of the home page and of encrypted notes
-const genericTitle = window.document.title;
+// the page title of the home page and of encrypted notes (not read from the page:
+// the server puts the note's title in the <title> of a plain share's /s/<id> page)
+const genericTitle = "Lappu";
 
 let language = LappuI18n.resolveLanguage(readStoredLanguage(), navigator.language);
 // what #main currently shows when it is a UI message rather than a note, so it can be re-rendered on language change
@@ -92,12 +93,30 @@ renderAppName();
 applyLanguage();
 
 $(window).on("hashchange", e => {
+    if (openOtherShare())
+        return;
     let oldUrl = e.originalEvent?.oldURL;
-    let oldHash = oldUrl?.lastIndexOf("#");
-    if (oldHash && getId(oldUrl.substring(oldHash)) !== getId())
+    let oldId;
+    try {
+        let old = new URL(oldUrl);
+        oldId = parseLocation(old.pathname, old.hash).id;
+    } catch (err) {
+        // no old URL: treat it as a change
+    }
+    if (oldId !== getId())
         display();
 });
-display();
+if (!openOtherShare())
+    display();
+
+// On a share page (/s/<id>), a hash that names another share (an in-note "#<id>"
+// link) opens that share in its legacy form. Returns whether it navigates away.
+function openOtherShare() {
+    if (!window.location.pathname.startsWith("/s/") || currentLocation().sharePath)
+        return false;
+    window.location.replace("/" + window.location.hash);
+    return true;
+}
 
 function display() {
     let generation = ++displayGeneration;
@@ -122,14 +141,14 @@ function display() {
             showMessage({ key: "errorLoading", params: { id, details: `${s} ${e}` }, homeLink: true });
     };
     if (kind !== "valid") {
-        $.ajax({ method: "get", url: "index.md", dataType: "text" })
+        $.ajax({ method: "get", url: "/index.md", dataType: "text" })
             .then(t => generation === displayGeneration && renderNote(t, id, kind, null), (r, s, e) => fail(r, s, e));
         return;
     }
     // The meta tells whether the note is encrypted; a failing meta request falls back to a plain note.
-    let metaRequest = $.ajax({ method: "get", url: `share.php?meta&id=${encodeURIComponent(id)}`, dataType: "json" })
+    let metaRequest = $.ajax({ method: "get", url: `/share.php?meta&id=${encodeURIComponent(id)}`, dataType: "json" })
         .then(m => m, () => null);
-    $.ajax({ method: "get", url: `share.php?id=${encodeURIComponent(id)}`, dataType: "text" })
+    $.ajax({ method: "get", url: `/share.php?id=${encodeURIComponent(id)}`, dataType: "text" })
         .then(t => metaRequest.then(meta => {
             if (generation !== displayGeneration)
                 return;
@@ -168,7 +187,7 @@ async function openEncrypted(ciphertext, id, meta, generation) {
                 showMessage({ key: "cryptoUnavailable", homeLink: true });
         }
     };
-    let key = parseHash(window.location.hash).key;
+    let key = currentLocation().key;
     if (key)
         await attempt(key);
     else
@@ -297,7 +316,7 @@ function markImageBroken(img) {
 function loadNoteFooter(id, meta) {
     currentFooter = { meta, quote: null };
     renderNoteFooter();
-    $.ajax({ method: "get", url: "share.php?quote", dataType: "json" }).catch(() => null).then(quote => {
+    $.ajax({ method: "get", url: "/share.php?quote", dataType: "json" }).catch(() => null).then(quote => {
         // ignore the result if another note was opened in the meantime
         if (getId() !== id || !currentFooter)
             return;
@@ -365,7 +384,7 @@ function renderMessage() {
     if (currentMessage.form)
         box.append(buildPasswordForm(currentMessage.form));
     if (currentMessage.homeLink)
-        box.append($("<p>").append($("<a>").attr("href", "#").text(t("home"))));
+        box.append($("<p>").append($("<a>").attr("href", "/").text(t("home"))));
     main.empty().append(box);
 }
 
@@ -441,7 +460,7 @@ function t(key) {
 
 function findHashTarget() {
     // element ids are "<note id>-<slug>"; the optional "~key" part of the hash is not part of them
-    let { id, anchor } = parseHash(window.location.hash);
+    let { id, anchor } = currentLocation();
     if (id === undefined || id === "" && anchor === null)
         return null;
     let target = anchor === null ? id : `${id}-${anchor}`;
@@ -453,8 +472,13 @@ function findHashTarget() {
     return document.getElementById(target);
 }
 
-function getId(hash) {
-    return getIdFromHash(hash || window.location.hash);
+// The id, key and anchor of the current page, from "/#<id>…" or "/s/<id>#…" (see parseLocation).
+function currentLocation() {
+    return parseLocation(window.location.pathname, window.location.hash);
+}
+
+function getId() {
+    return currentLocation().id;
 }
 
 // ---- Copy button: the main half copies Markdown, the caret opens a menu of formats and actions ----

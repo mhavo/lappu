@@ -103,14 +103,14 @@ func TestPatchResponseAndPruning(t *testing.T) {
 
 	// absent attachments: unchanged
 	w := e.patch(s.ID, s.Password, `{"content":"y"}`)
-	expect(t, w, 200, `{"encrypted":false,"missing":[]}`)
+	expect(t, w, 200, `{"encrypted":false,"missing":[],"expires":null}`)
 	if w.Header().Get("Content-Type") != "application/json" {
 		t.Errorf("content-type %q", w.Header().Get("Content-Type"))
 	}
 	// drop one, add an undeclared-yet one
 	newName := attName("three", "webp")
 	w = e.patch(s.ID, s.Password, `{"content":"y","attachments":["`+names[1]+`","`+newName+`"]}`)
-	expect(t, w, 200, `{"encrypted":false,"missing":["`+newName+`"]}`)
+	expect(t, w, 200, `{"encrypted":false,"missing":["`+newName+`"],"expires":null}`)
 	expect(t, e.do(req{method: "GET", target: "/share.php?att=" + s.ID + "/" + names[0]}), 404, "Not found")
 	expect(t, e.do(req{method: "GET", target: "/share.php?att=" + s.ID + "/" + names[1]}), 200, png+"two")
 	if _, err := os.Stat(filepath.Join(e.dataDir, s.ID+".att", names[0])); !os.IsNotExist(err) {
@@ -121,8 +121,8 @@ func TestPatchResponseAndPruning(t *testing.T) {
 func TestPatchEchoesEncrypted(t *testing.T) {
 	e := newEnv(t)
 	s, _ := e.shareWith(true)
-	expect(t, e.patch(s.ID, s.Password, `{"content":`+jsonString(testCT)+`}`), 200, `{"encrypted":true,"missing":[]}`)
-	expect(t, e.patch(s.ID, s.Password, `{"content":"plain","encrypted":false}`), 200, `{"encrypted":false,"missing":[]}`)
+	expect(t, e.patch(s.ID, s.Password, `{"content":`+jsonString(testCT)+`}`), 200, `{"encrypted":true,"missing":[],"expires":null}`)
+	expect(t, e.patch(s.ID, s.Password, `{"content":"plain","encrypted":false}`), 200, `{"encrypted":false,"missing":[],"expires":null}`)
 }
 
 func TestPutAttachmentRules(t *testing.T) {

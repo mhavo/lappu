@@ -2,8 +2,10 @@ package api
 
 import (
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 )
@@ -107,4 +109,103 @@ func TestClientIP(t *testing.T) {
 			t.Errorf("clientIP(%s, %q) = %s, want %s", c.remote, c.xff, got, c.want)
 		}
 	}
+}
+
+func TestReadLimitLookupFailures(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	e := newEnv(t, withSharePage, func(c *Config) {
+		c.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
+		c.LookupFailureLimit = 4
+		c.now = func() time.Time { return now }
+	})
+	s := e.create("# ok")
+	from := func(ip, target string) req {
+		return req{method: "GET", target: target, header: map[string]string{"X-Forwarded-For": ip}}
+	}
+	// every kind of failed lookup counts: missing, invalid, /s/, meta and attachments, GET and HEAD
+	for _, target := range []string{"/share.php?id=abcdef12", "/share.php?id=bad", "/s/abcdef12",
+		"/share.php?meta&id=abcdef12"} {
+		if w := e.do(from("198.51.100.1", target)); w.Code != 404 && w.Code != 400 {
+			t.Fatalf("%s: %d", target, w.Code)
+		}
+	}
+	for _, target := range []string{"/share.php?id=" + s.ID, "/share.php?meta&id=" + s.ID, "/s/" + s.ID,
+		"/share.php?att=abcdef12/x", "/share.php?quote", "/", "/robots.txt", "/healthz"} {
+		r := from("198.51.100.1", target)
+		want := http.StatusTooManyRequests
+		if !strings.HasPrefix(target, "/s/") && !strings.Contains(target, "id=") && !strings.Contains(target, "att=") {
+			want = 0 // not a limited endpoint
+		}
+		w := e.do(r)
+		if want != 0 && w.Code != want || want == 0 && w.Code == http.StatusTooManyRequests {
+			t.Errorf("%s: %d", target, w.Code)
+		}
+	}
+	if w := e.do(req{method: "HEAD", target: "/s/" + s.ID, header: map[string]string{"X-Forwarded-For": "198.51.100.1"}}); w.Code != 429 {
+		t.Errorf("HEAD: %d", w.Code)
+	}
+	// other clients and the upload token are not affected
+	if w := e.do(from("198.51.100.2", "/share.php?id="+s.ID)); w.Code != 200 {
+		t.Errorf("other client: %d", w.Code)
+	}
+	withToken := from("198.51.100.1", "/share.php?meta&id=abcdef12")
+	withToken.header["Authorization"] = "Bearer " + testToken
+	for range 10 {
+		if w := e.do(withToken); w.Code != 404 {
+			t.Fatalf("token: %d", w.Code)
+		}
+	}
+	// the window refills (4 per 10 minutes = one per 150 s)
+	now = now.Add(150 * time.Second)
+	if w := e.do(from("198.51.100.1", "/share.php?id="+s.ID)); w.Code != 200 {
+		t.Errorf("after refill: %d", w.Code)
+	}
+}
+
+func TestReadLimitValidSharesNeverCountAsFailures(t *testing.T) {
+	e := newEnv(t, withSharePage, func(c *Config) { c.LookupFailureLimit = 2 })
+	s := e.create("# ok")
+	for range 20 {
+		for _, target := range []string{"/share.php?id=" + s.ID, "/share.php?meta&id=" + s.ID, "/s/" + s.ID} {
+			if w := e.do(req{method: "GET", target: target}); w.Code != 200 {
+				t.Fatalf("%s: %d", target, w.Code)
+			}
+		}
+	}
+}
+
+func TestReadLimitGeneralRate(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	e := newEnv(t, func(c *Config) {
+		c.ReadLimit = 5
+		c.now = func() time.Time { return now }
+	})
+	s := e.create("x")
+	get := req{method: "GET", target: "/share.php?id=" + s.ID}
+	for range 5 {
+		expect(t, e.do(get), 200, "x")
+	}
+	expect(t, e.do(get), 429, "Too many requests")
+	// an invalid token is ignored on reads: still limited, never 401
+	expect(t, e.do(req{method: "GET", target: get.target, header: map[string]string{"Authorization": "Bearer wrong"}}), 429, "Too many requests")
+	expect(t, e.do(req{method: "GET", target: get.target, header: auth()}), 200, "x")
+	// writes, static files and /healthz are not read-limited
+	if w := e.do(req{method: "GET", target: "/style.css"}); w.Code != 200 {
+		t.Errorf("static: %d", w.Code)
+	}
+	expect(t, e.do(req{method: "GET", target: "/healthz"}), 200, "ok")
+	e.create("writes still work")
+	now = now.Add(time.Minute) // 5 per 5 minutes = one per minute
+	expect(t, e.do(get), 200, "x")
+	expect(t, e.do(get), 429, "Too many requests")
+}
+
+func TestReadLimitDoesNotChargeFailedAuth(t *testing.T) {
+	e := newEnv(t)
+	for range failureBurst + 5 {
+		e.do(req{method: "GET", target: "/share.php?meta&id=abcdef12", header: map[string]string{"Authorization": "Bearer wrong"}})
+	}
+	// failed-auth limiter untouched: a write with a wrong token is 401, not 429
+	expect(t, e.do(req{method: "POST", target: "/share.php", body: `{"content":"x"}`,
+		header: map[string]string{"Authorization": "Bearer wrong"}}), 401, "Invalid token")
 }

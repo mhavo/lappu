@@ -187,7 +187,7 @@ func TestPatchAndDelete(t *testing.T) {
 	expect(t, e.do(req{method: "PATCH", target: target, body: `{}`, header: auth("Password", s.Password)}), 400, "No content")
 	expect(t, e.do(req{method: "PATCH", target: target, body: `{"content":"v2"}`, header: auth("Password", "nope")}), 401, "Unauthorized")
 	expect(t, e.do(req{method: "PATCH", target: "/share.php?id=abcdef12", body: `{"content":"v2"}`, header: auth("Password", "x")}), 404, "Not found")
-	expect(t, e.do(req{method: "PATCH", target: target, body: `{"content":"v2"}`, header: auth("Password", s.Password)}), 200, `{"encrypted":false,"missing":[]}`)
+	expect(t, e.do(req{method: "PATCH", target: target, body: `{"content":"v2"}`, header: auth("Password", s.Password)}), 200, `{"encrypted":false,"missing":[],"expires":null}`)
 	expect(t, e.do(req{method: "GET", target: target}), 200, "v2")
 
 	expect(t, e.do(req{method: "DELETE", target: target, header: map[string]string{"Password": s.Password}}), 401, "Invalid token")
@@ -213,7 +213,7 @@ func TestLegacyPHPShare(t *testing.T) {
 
 	expect(t, e.do(req{method: "GET", target: target}), 200, "# legacy")
 	expect(t, e.do(req{method: "GET", target: "/share.php?meta&id=" + id}), 200, `{"id":"a1b2c3d4","created":1729500000,"expires":null,"encrypted":false}`)
-	expect(t, e.do(req{method: "PATCH", target: target, body: `{"content":"# updated"}`, header: auth("Password", pw)}), 200, `{"encrypted":false,"missing":[]}`)
+	expect(t, e.do(req{method: "PATCH", target: target, body: `{"content":"# updated"}`, header: auth("Password", pw)}), 200, `{"encrypted":false,"missing":[],"expires":null}`)
 	expect(t, e.do(req{method: "GET", target: target}), 200, "# updated")
 
 	var meta map[string]any
@@ -503,20 +503,72 @@ func TestExpiredShareIs404Everywhere(t *testing.T) {
 	expect(t, e.do(req{method: "DELETE", target: "/share.php?id=" + s.ID, header: auth("Password", pw["Password"])}), 404, "Not found")
 }
 
-func TestPatchIgnoresExpiresIn(t *testing.T) {
+func TestPatchExpiresIn(t *testing.T) {
+	e := newEnv(t)
+	now := int64(1_800_000_000)
+	e.store.SetClock(func() time.Time { return time.Unix(now, 0) })
+	var s store.Share
+	json.Unmarshal(e.post(`{"content":"x","expiresIn":60,"attachments":[]}`).Body.Bytes(), &s)
+	expires := func() any { return e.metaOf(s.ID)["expires"] }
+
+	// content only: the expiry stays and is reported
+	expect(t, e.patch(s.ID, s.Password, `{"content":"y"}`), 200, `{"encrypted":false,"missing":[],"expires":1800000060}`)
+	// expiry only: content is untouched
+	now += 10
+	expect(t, e.patch(s.ID, s.Password, `{"expiresIn":3600}`), 200, `{"encrypted":false,"missing":[],"expires":1800003610}`)
+	expect(t, e.do(req{method: "GET", target: "/share.php?id=" + s.ID}), 200, "y")
+	if expires() != float64(1800003610) {
+		t.Errorf("meta expires = %v", expires())
+	}
+	// null and 0 remove the expiry
+	for _, v := range []string{"null", "0"} {
+		e.patch(s.ID, s.Password, `{"expiresIn":60}`)
+		expect(t, e.patch(s.ID, s.Password, `{"expiresIn":`+v+`}`), 200, `{"encrypted":false,"missing":[],"expires":null}`)
+		if expires() != nil {
+			t.Errorf("%s: meta expires = %v", v, expires())
+		}
+	}
+	// both at once
+	expect(t, e.patch(s.ID, s.Password, `{"content":"z","expiresIn":1}`), 200, `{"encrypted":false,"missing":[],"expires":1800000011}`)
+	expect(t, e.do(req{method: "GET", target: "/share.php?id=" + s.ID}), 200, "z")
+	// an expired share cannot be revived
+	now++
+	expect(t, e.patch(s.ID, s.Password, `{"expiresIn":0}`), 404, "Not found")
+}
+
+func TestPatchExpiresInRejections(t *testing.T) {
 	e := newEnv(t)
 	now := int64(1_800_000_000)
 	e.store.SetClock(func() time.Time { return time.Unix(now, 0) })
 	var s store.Share
 	json.Unmarshal(e.post(`{"content":"x","expiresIn":60}`).Body.Bytes(), &s)
-	w := e.do(req{method: "PATCH", target: "/share.php?id=" + s.ID, body: `{"content":"y","expiresIn":99999}`, header: auth("Password", s.Password)})
-	if w.Code != 200 {
-		t.Fatalf("%d %s", w.Code, w.Body)
+	for _, v := range []string{`-1`, `31536001`, `1.5`, `"60"`, `true`, `[1]`, `1e3`, `99999999999999999999`} {
+		for _, body := range []string{`{"expiresIn":` + v + `}`, `{"content":"new","expiresIn":` + v + `}`} {
+			expect(t, e.patch(s.ID, s.Password, body), 400, `{"error":"Invalid expiresIn"}`)
+		}
 	}
-	m, _ := e.store.Meta(s.ID)
-	if m.Expires == nil || *m.Expires != now+60 {
-		t.Errorf("expires = %v", m.Expires)
+	expect(t, e.patch(s.ID, s.Password, `{}`), 400, "No content")
+	expect(t, e.patch(s.ID, s.Password, `{"encrypted":false}`), 400, "No content")
+	for _, body := range []string{`{"expiresIn":0,"encrypted":false}`, `{"expiresIn":0,"attachments":[]}`} {
+		expect(t, e.patch(s.ID, s.Password, body), 400, `{"error":"encrypted and attachments need content"}`)
 	}
+	// nothing changed; a wrong password or token is rejected as before
+	expect(t, e.patch(s.ID, "nope", `{"expiresIn":0}`), 401, "Unauthorized")
+	expect(t, e.do(req{method: "PATCH", target: "/share.php?id=" + s.ID, body: `{"expiresIn":0}`,
+		header: map[string]string{"Password": s.Password}}), 401, "Invalid token")
+	expect(t, e.do(req{method: "GET", target: "/share.php?id=" + s.ID}), 200, "x")
+	if m := e.metaOf(s.ID); m["expires"] != float64(now+60) {
+		t.Errorf("expires = %v", m["expires"])
+	}
+}
+
+func TestPatchExpiryKeepsEncryptedShare(t *testing.T) {
+	e := newEnv(t)
+	w := e.post(`{"content":` + jsonString(testCT) + `,"encrypted":true}`)
+	var s store.Share
+	json.Unmarshal(w.Body.Bytes(), &s)
+	expect(t, e.patch(s.ID, s.Password, `{"expiresIn":null}`), 200, `{"encrypted":true,"missing":[],"expires":null}`)
+	expect(t, e.do(req{method: "GET", target: "/share.php?id=" + s.ID}), 200, testCT)
 }
 
 func (e *env) patch(id, pw, body string) *httptest.ResponseRecorder {

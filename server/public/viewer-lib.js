@@ -39,6 +39,25 @@
         return parseHash(hash).id;
     }
 
+    // Where the viewer is. Legacy pages ("/") carry everything in the hash (see
+    // parseHash). Share pages ("/s/<id>") take the id from the path; their hash
+    // may hold "~<key>" and/or the anchor, either as "-<anchor>" or as
+    // "<id>-<anchor>" (the form of the heading permalinks and footnote links,
+    // whose element ids are "<id>-<slug>").
+    // Returns { id, key, anchor, sharePath }: sharePath is true on a share page.
+    // When the hash of a share page names another share (an in-note "#<other id>"
+    // link), the result is that hash's legacy reading with sharePath false.
+    function parseLocation(pathname, hash) {
+        const parsed = parseHash(hash);
+        const match = /^\/s\/([^/]*)$/.exec(pathname || "");
+        if (!match)
+            return { ...parsed, sharePath: false };
+        const id = match[1];
+        if (parsed.id === undefined || parsed.id === "" || parsed.id === id)
+            return { id, key: parsed.key, anchor: parsed.anchor, sharePath: true };
+        return { ...parsed, sharePath: false };
+    }
+
     // "home" when no id is given, otherwise "valid" or "invalid".
     function classifyId(id) {
         if (id === undefined || id === null || id === "")
@@ -104,13 +123,15 @@
         return `obsidian://daily?content=${encodeURIComponent(content)}&append=true`;
     }
 
-    // The link to a share without the heading anchor; the decryption key stays only when keepKey is set.
+    // The link to a share without the heading anchor; the decryption key stays
+    // only when keepKey is set. A share page keeps its "/s/<id>" form, a legacy
+    // page its "/#<id>" form.
     function shareLink(href, keepKey) {
         const url = new URL(href);
-        const { id, key } = parseHash(url.hash);
+        const { id, key, sharePath } = parseLocation(url.pathname, url.hash);
         // the key is encoded like the plugin's encodeLinkKey (src/encryption.ts)
-        const encodedKey = key ? encodeURIComponent(key).replace(/-/g, "%2D").replace(/~/g, "%7E") : "";
-        url.hash = id ? id + (keepKey && key ? `~${encodedKey}` : "") : "";
+        const keyPart = keepKey && key ? `~${encodeURIComponent(key).replace(/-/g, "%2D").replace(/~/g, "%7E")}` : "";
+        url.hash = sharePath ? keyPart : id ? id + keyPart : "";
         return url.href;
     }
 
@@ -318,7 +339,7 @@
     function attachmentUrl(id, name) {
         if (typeof id !== "string" || !ID_PATTERN.test(id) || !isAttachmentName(name))
             return null;
-        return `share.php?att=${id}/${name}`;
+        return `/share.php?att=${id}/${name}`;
     }
 
     // Decides the src of a markdown image. ctx = { id, encrypted } of the shared
@@ -373,7 +394,7 @@
     }
 
     const api = {
-        ID_PATTERN, parseHash, getIdFromHash, classifyId, escapeHtml, formatParts,
+        ID_PATTERN, parseHash, parseLocation, getIdFromHash, classifyId, escapeHtml, formatParts,
         safeFileName, buildObsidianNewUrl, buildObsidianDailyUrl, shareLink, noteMetadata, buildDownloadHref, pageTitle, formatTimestamp, formatDate, sourceLink,
         CrypterError, decodeMessage, deriveKey, decrypt, decryptBytes, cryptoAvailable,
         ATTACHMENT_PATTERN, ATTACHMENT_PLACEHOLDER, isAttachmentName, attachmentMime, attachmentUrl, rewriteAttachmentSrc,

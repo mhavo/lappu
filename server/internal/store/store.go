@@ -2,6 +2,7 @@
 package store
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -11,9 +12,11 @@ import (
 	"fmt"
 	"hash/fnv"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 )
@@ -50,7 +53,11 @@ type Share struct {
 	ID       string `json:"id"`
 	Password string `json:"password"`
 	Created  int64  `json:"created"`
+	Expires  *int64 `json:"expires"` // unix seconds, null = never
 }
+
+// MaxExpiresIn is the longest allowed lifetime of a share, in seconds (365 days).
+const MaxExpiresIn = 365 * 24 * 60 * 60
 
 type Store struct {
 	dir   string
@@ -64,6 +71,14 @@ func New(dir string) (*Store, error) {
 		return nil, err
 	}
 	return &Store{dir: dir, now: time.Now}, nil
+}
+
+// SetClock replaces the time source; for tests, call before first use.
+func (s *Store) SetClock(now func() time.Time) { s.now = now }
+
+// expired reports whether m has an expiry that has been reached.
+func (s *Store) expired(m Meta) bool {
+	return m.Expires != nil && s.now().Unix() >= *m.Expires
 }
 
 func (s *Store) lock(id string) func() {
@@ -81,6 +96,10 @@ func (s *Store) Content(id string) ([]byte, error) {
 	if !ValidID(id) {
 		return nil, ErrInvalidID
 	}
+	// A missing or unreadable meta does not hide the content, only expiry does.
+	if m, err := s.readMeta(id); err == nil && s.expired(m) {
+		return nil, ErrNotFound
+	}
 	b, err := os.ReadFile(s.contentPath(id))
 	return b, notFound(err)
 }
@@ -89,7 +108,11 @@ func (s *Store) Meta(id string) (Meta, error) {
 	if !ValidID(id) {
 		return Meta{}, ErrInvalidID
 	}
-	return s.readMeta(id)
+	m, err := s.readMeta(id)
+	if err == nil && s.expired(m) {
+		return Meta{}, ErrNotFound
+	}
+	return m, err
 }
 
 func (s *Store) readMeta(id string) (Meta, error) {
@@ -105,7 +128,9 @@ func (s *Store) readMeta(id string) (Meta, error) {
 	return m, nil
 }
 
-func (s *Store) Create(content string) (Share, error) {
+// Create stores a new share. expiresIn is the lifetime in seconds (validated
+// by the caller against MaxExpiresIn); 0 means it never expires.
+func (s *Store) Create(content string, expiresIn int64) (Share, error) {
 	password := randomHex(16)
 	for {
 		id := randomHex(12)
@@ -119,6 +144,10 @@ func (s *Store) Create(content string) (Share, error) {
 		}
 		now := s.now().Unix()
 		m := Meta{ID: id, PasswordSHA256: hashPassword(password), Created: now, Updated: now}
+		if expiresIn > 0 {
+			exp := now + expiresIn
+			m.Expires = &exp
+		}
 		err := s.writeContent(id, content)
 		if err == nil {
 			err = s.writeMeta(id, m)
@@ -127,7 +156,7 @@ func (s *Store) Create(content string) (Share, error) {
 		if err != nil {
 			return Share{}, err
 		}
-		return Share{ID: id, Password: password, Created: now}, nil
+		return Share{ID: id, Password: password, Created: now, Expires: m.Expires}, nil
 	}
 }
 
@@ -152,6 +181,11 @@ func (s *Store) Delete(id, password string) error {
 		return ErrInvalidID
 	}
 	defer s.lock(id)()
+	if m, err := s.readMeta(id); err == nil && s.expired(m) {
+		// Behaves as missing, whatever the password; clean up while we are here.
+		s.removeFiles(id)
+		return ErrNotFound
+	}
 	if _, err := s.authorize(id, password); err != nil {
 		return err
 	}
@@ -168,6 +202,9 @@ func (s *Store) authorize(id, password string) (Meta, error) {
 	m, err := s.readMeta(id)
 	if err != nil {
 		return Meta{}, err
+	}
+	if s.expired(m) {
+		return Meta{}, ErrNotFound
 	}
 	switch {
 	case m.PasswordSHA256 != "":
@@ -186,6 +223,72 @@ func (s *Store) authorize(id, password string) (Meta, error) {
 		return Meta{}, ErrUnauthorized
 	}
 	return m, nil
+}
+
+// removeFiles deletes both files of a share, best effort; the caller holds the id lock.
+func (s *Store) removeFiles(id string) error {
+	err := os.Remove(s.contentPath(id))
+	if errors.Is(err, fs.ErrNotExist) {
+		err = nil
+	}
+	if merr := os.Remove(s.metaPath(id)); merr != nil && !errors.Is(merr, fs.ErrNotExist) && err == nil {
+		err = merr
+	}
+	return err
+}
+
+// DeleteExpired removes every expired share and returns how many it removed.
+// Unreadable or malformed metas are skipped, never deleted.
+func (s *Store) DeleteExpired() (int, error) {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	var firstErr error
+	for _, e := range entries {
+		id, ok := strings.CutSuffix(e.Name(), ".json")
+		if !ok || !ValidID(id) {
+			continue
+		}
+		unlock := s.lock(id)
+		m, err := s.readMeta(id)
+		if err == nil && s.expired(m) {
+			if err := s.removeFiles(id); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+			} else {
+				n++
+			}
+		}
+		unlock()
+	}
+	return n, firstErr
+}
+
+// CleanupLoop runs DeleteExpired at once and then every interval until ctx is done.
+func (s *Store) CleanupLoop(ctx context.Context, interval time.Duration, logger *slog.Logger) {
+	run := func() {
+		n, err := s.DeleteExpired()
+		if err != nil {
+			logger.Error("expired cleanup", "err", err)
+		}
+		if n > 0 {
+			logger.Info("deleted expired shares", "count", n)
+		}
+	}
+	run()
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			run()
+		}
+	}
 }
 
 func (s *Store) writeContent(id, content string) error {

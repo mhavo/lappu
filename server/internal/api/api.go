@@ -161,7 +161,8 @@ func (s *server) meta(w http.ResponseWriter, id string) {
 		writeJSON(w, http.StatusOK, struct {
 			ID      string `json:"id"`
 			Created int64  `json:"created"`
-		}{m.ID, m.Created})
+			Expires *int64 `json:"expires"`
+		}{m.ID, m.Created, m.Expires})
 	}
 }
 
@@ -246,10 +247,19 @@ func (s *server) write(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var content string
+	var expiresIn int64
 	if r.Method != http.MethodDelete {
+		var raw json.RawMessage
 		var ok bool
-		if content, ok = s.readContent(w, r); !ok {
+		if content, raw, ok = s.readContent(w, r); !ok {
 			return
+		}
+		// Expiry is only set on creation; PATCH ignores it entirely.
+		if r.Method == http.MethodPost {
+			if expiresIn, ok = parseExpiresIn(raw); !ok {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid expiresIn"})
+				return
+			}
 		}
 	}
 
@@ -257,7 +267,7 @@ func (s *server) write(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 		var share store.Share
-		if share, err = s.Store.Create(content); err == nil {
+		if share, err = s.Store.Create(content, expiresIn); err == nil {
 			if !trusted {
 				s.creates.charge(ip)
 			}
@@ -290,20 +300,36 @@ func (s *server) validToken(r *http.Request) bool {
 	return subtle.ConstantTimeCompare(sum[:], s.tokenHash[:]) == 1
 }
 
-func (s *server) readContent(w http.ResponseWriter, r *http.Request) (string, bool) {
+// parseExpiresIn accepts an absent field, null or 0 (never expires) and
+// integers from 1 to store.MaxExpiresIn seconds.
+func parseExpiresIn(raw json.RawMessage) (int64, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, true
+	}
+	var n int64
+	if err := json.Unmarshal(raw, &n); err != nil || n < 0 || n > store.MaxExpiresIn {
+		return 0, false
+	}
+	return n, true
+}
+
+// readContent decodes the request body; expiresIn is returned raw for the
+// caller to validate (only POST uses it).
+func (s *server) readContent(w http.ResponseWriter, r *http.Request) (string, json.RawMessage, bool) {
 	var body struct {
-		Content *string `json:"content"`
+		Content   *string         `json:"content"`
+		ExpiresIn json.RawMessage `json:"expiresIn"`
 	}
 	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, s.MaxBodyBytes)).Decode(&body)
 	if _, tooLarge := errors.AsType[*http.MaxBytesError](err); tooLarge {
 		text(w, http.StatusRequestEntityTooLarge, "Request too large")
-		return "", false
+		return "", nil, false
 	}
 	if err != nil || body.Content == nil {
 		text(w, http.StatusBadRequest, "No content")
-		return "", false
+		return "", nil, false
 	}
-	return *body.Content, true
+	return *body.Content, body.ExpiresIn, true
 }
 
 func (s *server) storeError(w http.ResponseWriter, err error) {

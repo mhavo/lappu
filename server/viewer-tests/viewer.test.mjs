@@ -110,3 +110,21 @@ test("buildObsidianNewUrl encodes spaces and unicode in the name", () => {
 test("buildDownloadHref produces a plain-text data URL", () => {
     assert.equal(lib.buildDownloadHref("# a&b"), "data:text/plain;charset=utf-8,%23%20a%26b");
 });
+
+test("formatExpires formats unix seconds for the given language", () => {
+    const expires = 1_800_000_000;
+    assert.equal(lib.formatExpires(expires, "fi"), new Date(expires * 1000).toLocaleString("fi"));
+    assert.equal(lib.formatExpires(expires, "en"), new Date(expires * 1000).toLocaleString("en"));
+});
+
+test("formatExpires returns null for a missing or invalid expiry", () => {
+    for (const value of [null, undefined, "1800000000", NaN, Infinity, 1e20])
+        assert.equal(lib.formatExpires(value, "en"), null);
+});
+
+test("expires translation has a date placeholder in every language", () => {
+    for (const lang of i18n.languages)
+        assert.match(i18n.translate(lang, "expires"), /\{date\}/);
+    assert.equal(i18n.translate("fi", "expires"), "Vanhenee: {date}");
+    assert.equal(i18n.translate("en", "expires"), "Expires: {date}");
+});

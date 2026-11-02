@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/mhavo/lappu/server/internal/store"
 )
@@ -22,6 +23,7 @@ type env struct {
 	t       *testing.T
 	h       http.Handler
 	dataDir string
+	store   *store.Store
 	quotes  string
 }
 
@@ -48,7 +50,7 @@ func newEnv(t *testing.T, mod ...func(*Config)) *env {
 	for _, m := range mod {
 		m(&cfg)
 	}
-	return &env{t: t, h: New(cfg), dataDir: dataDir, quotes: cfg.QuotesFile}
+	return &env{t: t, h: New(cfg), store: s, dataDir: dataDir, quotes: cfg.QuotesFile}
 }
 
 type req struct {
@@ -139,7 +141,7 @@ func TestMeta(t *testing.T) {
 	}
 	var m map[string]any
 	json.Unmarshal(w.Body.Bytes(), &m)
-	if m["id"] != s.ID || m["created"] != float64(s.Created) || len(m) != 2 {
+	if m["id"] != s.ID || m["created"] != float64(s.Created) || len(m) != 3 || m["expires"] != nil {
 		t.Errorf("meta = %v", m)
 	}
 	expectJSON := func(target string, code int, body string) {
@@ -210,7 +212,7 @@ func TestLegacyPHPShare(t *testing.T) {
 	target := "/share.php?id=" + id
 
 	expect(t, e.do(req{method: "GET", target: target}), 200, "# legacy")
-	expect(t, e.do(req{method: "GET", target: "/share.php?meta&id=" + id}), 200, `{"id":"a1b2c3d4","created":1729500000}`)
+	expect(t, e.do(req{method: "GET", target: "/share.php?meta&id=" + id}), 200, `{"id":"a1b2c3d4","created":1729500000,"expires":null}`)
 	expect(t, e.do(req{method: "PATCH", target: target, body: `{"content":"# updated"}`, header: auth("Password", pw)}), 200, "")
 	expect(t, e.do(req{method: "GET", target: target}), 200, "# updated")
 
@@ -360,4 +362,92 @@ func TestRateLimitGroupsIPv6By64(t *testing.T) {
 	}
 	expect(t, e.do(bad("2001:db8:1:2:ffff::1")), 429, "Too many requests")
 	expect(t, e.do(bad("2001:db8:1:3::1")), 401, "Invalid token")
+}
+
+func (e *env) post(body string) *httptest.ResponseRecorder {
+	e.t.Helper()
+	return e.do(req{method: "POST", target: "/share.php", body: body, header: auth()})
+}
+
+func TestPostExpiresIn(t *testing.T) {
+	e := newEnv(t)
+	now := int64(1_800_000_000)
+	e.store.SetClock(func() time.Time { return time.Unix(now, 0) })
+
+	var resp map[string]any
+	w := e.post(`{"content":"x"}`)
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if v, ok := resp["expires"]; !ok || v != nil {
+		t.Errorf("no expiresIn: expires = %v (present %v)", v, ok)
+	}
+	for _, body := range []string{`{"content":"x","expiresIn":null}`, `{"content":"x","expiresIn":0}`} {
+		resp = nil
+		json.Unmarshal(e.post(body).Body.Bytes(), &resp)
+		if resp["expires"] != nil {
+			t.Errorf("%s: expires = %v", body, resp["expires"])
+		}
+	}
+	for _, secs := range []int64{1, 86400, 31536000} {
+		resp = nil
+		w = e.post(fmt.Sprintf(`{"content":"x","expiresIn":%d}`, secs))
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		if w.Code != 200 || resp["expires"] != float64(now+secs) || resp["created"] != float64(now) {
+			t.Errorf("expiresIn %d: %d %v", secs, w.Code, resp)
+		}
+		id := resp["id"].(string)
+		w = e.do(req{method: "GET", target: "/share.php?meta&id=" + id})
+		var m map[string]any
+		json.Unmarshal(w.Body.Bytes(), &m)
+		if m["expires"] != float64(now+secs) {
+			t.Errorf("meta expires = %v", m["expires"])
+		}
+	}
+}
+
+func TestPostExpiresInInvalid(t *testing.T) {
+	e := newEnv(t)
+	for _, v := range []string{`-1`, `31536001`, `1.5`, `"60"`, `true`, `[1]`, `1e3`, `99999999999999999999`} {
+		w := e.post(`{"content":"x","expiresIn":` + v + `}`)
+		var m map[string]string
+		json.Unmarshal(w.Body.Bytes(), &m)
+		if w.Code != 400 || m["error"] == "" || w.Header().Get("Content-Type") != "application/json" {
+			t.Errorf("expiresIn %s: %d %q", v, w.Code, w.Body)
+		}
+	}
+	entries, _ := os.ReadDir(e.dataDir)
+	if len(entries) != 0 {
+		t.Errorf("invalid requests left %d files", len(entries))
+	}
+}
+
+func TestExpiredShareIs404Everywhere(t *testing.T) {
+	e := newEnv(t)
+	now := int64(1_800_000_000)
+	e.store.SetClock(func() time.Time { return time.Unix(now, 0) })
+	var s store.Share
+	json.Unmarshal(e.post(`{"content":"x","expiresIn":60}`).Body.Bytes(), &s)
+	pw := map[string]string{"Password": s.Password}
+
+	expect(t, e.do(req{method: "GET", target: "/share.php?id=" + s.ID}), 200, "x")
+	now += 60
+	expect(t, e.do(req{method: "GET", target: "/share.php?id=" + s.ID}), 404, "Not found")
+	expect(t, e.do(req{method: "GET", target: "/share.php?meta&id=" + s.ID}), 404, `{"error":"Not found"}`)
+	expect(t, e.do(req{method: "PATCH", target: "/share.php?id=" + s.ID, body: `{"content":"y"}`, header: auth("Password", s.Password)}), 404, "Not found")
+	expect(t, e.do(req{method: "DELETE", target: "/share.php?id=" + s.ID, header: auth("Password", pw["Password"])}), 404, "Not found")
+}
+
+func TestPatchIgnoresExpiresIn(t *testing.T) {
+	e := newEnv(t)
+	now := int64(1_800_000_000)
+	e.store.SetClock(func() time.Time { return time.Unix(now, 0) })
+	var s store.Share
+	json.Unmarshal(e.post(`{"content":"x","expiresIn":60}`).Body.Bytes(), &s)
+	w := e.do(req{method: "PATCH", target: "/share.php?id=" + s.ID, body: `{"content":"y","expiresIn":99999}`, header: auth("Password", s.Password)})
+	if w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	m, _ := e.store.Meta(s.ID)
+	if m.Expires == nil || *m.Expires != now+60 {
+		t.Errorf("expires = %v", m.Expires)
+	}
 }

@@ -75,9 +75,20 @@
         return `data:text/plain;charset=utf-8,${encodeURIComponent(content)}`;
     }
 
+    // The expiry of a share as a localized date and time, or null when the meta
+    // has no (valid) expiry. `expires` is unix seconds.
+    function formatExpires(expires, lang) {
+        if (typeof expires !== "number" || !Number.isFinite(expires))
+            return null;
+        const date = new Date(expires * 1000);
+        if (Number.isNaN(date.getTime()))
+            return null;
+        return date.toLocaleString(lang);
+    }
+
     const api = {
         ID_PATTERN, getIdFromHash, classifyId, escapeHtml, formatParts,
-        safeFileName, buildObsidianNewUrl, buildDownloadHref
+        safeFileName, buildObsidianNewUrl, buildDownloadHref, formatExpires
     };
     if (typeof module === "object" && module.exports)
         module.exports = api;

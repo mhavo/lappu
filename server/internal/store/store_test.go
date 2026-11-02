@@ -1,14 +1,17 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 func newStore(t *testing.T) (*Store, string) {
@@ -62,7 +65,7 @@ func TestNewCreatesPrivateDir(t *testing.T) {
 
 func TestCreateWritesContentAndHashedMeta(t *testing.T) {
 	s, dir := newStore(t)
-	share, err := s.Create("# hello")
+	share, err := s.Create("# hello", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,8 +108,8 @@ func TestCreateWritesContentAndHashedMeta(t *testing.T) {
 
 func TestCreateGeneratesUniqueIDs(t *testing.T) {
 	s, _ := newStore(t)
-	a, _ := s.Create("a")
-	b, _ := s.Create("b")
+	a, _ := s.Create("a", 0)
+	b, _ := s.Create("b", 0)
 	if a.ID == b.ID || a.Password == b.Password {
 		t.Error("ids or passwords repeat")
 	}
@@ -147,7 +150,7 @@ func TestInvalidIDRejected(t *testing.T) {
 
 func TestUpdateAndDeleteCheckPassword(t *testing.T) {
 	s, dir := newStore(t)
-	share, _ := s.Create("v1")
+	share, _ := s.Create("v1", 0)
 
 	if err := s.Update(share.ID, "wrong", "v2"); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("Update wrong pw err = %v", err)
@@ -241,7 +244,7 @@ func TestMetaIgnoresUnknownFields(t *testing.T) {
 
 func TestConcurrentUpdates(t *testing.T) {
 	s, dir := newStore(t)
-	share, _ := s.Create("v0")
+	share, _ := s.Create("v0", 0)
 	var wg sync.WaitGroup
 	for i := range 20 {
 		wg.Go(func() {
@@ -259,8 +262,8 @@ func TestConcurrentUpdates(t *testing.T) {
 
 func TestMetaIDNeverTakenFromFileContent(t *testing.T) {
 	s, dir := newStore(t)
-	a, _ := s.Create("a")
-	b, _ := s.Create("b")
+	a, _ := s.Create("a", 0)
+	b, _ := s.Create("b", 0)
 	bMeta, _ := os.ReadFile(filepath.Join(dir, b.ID+".json"))
 
 	// A's meta claims to be B (copied/tampered), and C's meta claims a traversal path.
@@ -289,5 +292,123 @@ func TestMetaIDNeverTakenFromFileContent(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(dir), "escaped.json")); err == nil {
 		t.Error("wrote outside the data dir")
+	}
+}
+
+func fakeClock(s *Store, start int64) *int64 {
+	cur := start
+	s.SetClock(func() time.Time { return time.Unix(cur, 0) })
+	return &cur
+}
+
+func TestExpiredShareBehavesAsMissing(t *testing.T) {
+	s, dir := newStore(t)
+	now := fakeClock(s, 1000)
+	share, err := s.Create("x", 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if share.Expires == nil || *share.Expires != 1060 {
+		t.Fatalf("expires = %v", share.Expires)
+	}
+	*now = 1059
+	if _, err := s.Content(share.ID); err != nil {
+		t.Fatalf("not yet expired: %v", err)
+	}
+	*now = 1060 // now >= expires
+	if _, err := s.Content(share.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Content: %v", err)
+	}
+	if _, err := s.Meta(share.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Meta: %v", err)
+	}
+	if err := s.Update(share.ID, share.Password, "y"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Update: %v", err)
+	}
+	if err := s.Delete(share.ID, "wrong"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Delete: %v", err)
+	}
+	for _, ext := range []string{".md", ".json"} {
+		if _, err := os.Stat(filepath.Join(dir, share.ID+ext)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s not removed by Delete: %v", ext, err)
+		}
+	}
+}
+
+func TestLegacyMetaNeverExpires(t *testing.T) {
+	s, dir := newStore(t)
+	fakeClock(s, 1<<40)
+	os.WriteFile(filepath.Join(dir, "legacy01.md"), []byte("old"), 0o600)
+	os.WriteFile(filepath.Join(dir, "legacy01.json"), []byte(`{"id":"legacy01","password":"pw","created":5}`), 0o600)
+	if _, err := s.Content("legacy01"); err != nil {
+		t.Fatal(err)
+	}
+	m, err := s.Meta("legacy01")
+	if err != nil || m.Expires != nil {
+		t.Fatalf("%+v %v", m, err)
+	}
+	if n, err := s.DeleteExpired(); err != nil || n != 0 {
+		t.Fatalf("cleanup %d %v", n, err)
+	}
+}
+
+func TestNoExpiryWhenZero(t *testing.T) {
+	s, dir := newStore(t)
+	share, _ := s.Create("x", 0)
+	if share.Expires != nil {
+		t.Fatalf("expires = %v", *share.Expires)
+	}
+	if v, ok := readMeta(t, dir, share.ID)["expires"]; !ok || v != nil {
+		t.Errorf("meta expires = %v (present %v)", v, ok)
+	}
+}
+
+func TestDeleteExpired(t *testing.T) {
+	s, dir := newStore(t)
+	now := fakeClock(s, 1000)
+	gone, _ := s.Create("a", 10)
+	kept, _ := s.Create("b", 100)
+	forever, _ := s.Create("c", 0)
+	os.WriteFile(filepath.Join(dir, "broken01.json"), []byte(`{not json`), 0o600)
+	os.WriteFile(filepath.Join(dir, "broken01.md"), []byte("keep"), 0o600)
+	*now = 1050
+	n, err := s.DeleteExpired()
+	if err != nil || n != 1 {
+		t.Fatalf("deleted %d, %v", n, err)
+	}
+	for _, ext := range []string{".md", ".json"} {
+		if _, err := os.Stat(filepath.Join(dir, gone.ID+ext)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s survived: %v", ext, err)
+		}
+	}
+	for _, name := range []string{kept.ID + ".md", forever.ID + ".json", "broken01.json", "broken01.md"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestCleanupLoopStopsOnCancel(t *testing.T) {
+	s, _ := newStore(t)
+	share, _ := s.Create("a", 1)
+	fakeClock(s, time.Now().Unix()+10)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { s.CleanupLoop(ctx, time.Hour, slog.New(slog.DiscardHandler)); close(done) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(s.metaPath(share.ID)); errors.Is(err, os.ErrNotExist) {
+			break // the startup run removed it
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("startup cleanup did not run")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("loop did not stop")
 	}
 }

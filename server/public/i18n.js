@@ -14,6 +14,7 @@
             downloadMarkdown: "Download Markdown",
             copyToObsidian: "Copy to Obsidian",
             shared: "Shared: {date}",
+            expires: "Expires: {date}",
             language: "Language"
         },
         fi: {
@@ -25,6 +26,7 @@
             downloadMarkdown: "Lataa Markdown",
             copyToObsidian: "Kopioi Obsidianiin",
             shared: "Jaettu: {date}",
+            expires: "Vanhenee: {date}",
             language: "Kieli"
         }
     };

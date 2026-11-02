@@ -1,4 +1,4 @@
-const { getIdFromHash, classifyId, formatParts, safeFileName, buildObsidianNewUrl, buildDownloadHref } = LappuViewer;
+const { getIdFromHash, classifyId, formatParts, safeFileName, buildObsidianNewUrl, buildDownloadHref, formatExpires } = LappuViewer;
 const LANGUAGE_STORAGE_KEY = "lappu-language";
 
 let md = markdownit({
@@ -155,6 +155,11 @@ function renderNoteFooter() {
         });
         parts.push($("<p>").addClass("note-timestamp").text(t("shared").replace("{date}", formatted)));
     }
+
+    // Add expiry if the share has one
+    let expires = formatExpires(meta && meta.expires, language);
+    if (expires)
+        parts.push($("<p>").addClass("note-timestamp").text(t("expires").replace("{date}", expires)));
 
     // Add quote if available (always inserted as text, never as HTML)
     if (quote && quote.quote) {

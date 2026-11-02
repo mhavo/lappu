@@ -58,6 +58,11 @@ func run(logger *slog.Logger) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
+	cleanupDone := make(chan struct{})
+	go func() {
+		defer close(cleanupDone)
+		st.CleanupLoop(ctx, time.Hour, logger)
+	}()
 	errc := make(chan error, 1)
 	go func() {
 		logger.Info("listening", "addr", cfg.Listen, "data", cfg.DataDir)
@@ -70,6 +75,7 @@ func run(logger *slog.Logger) error {
 	case <-ctx.Done():
 	}
 	logger.Info("shutting down")
+	<-cleanupDone // ctx is done, so the loop is exiting
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {

@@ -1,6 +1,6 @@
 {
     "name": "lappu",
-    "version": "2.0.0",
+    "version": "2.1.0",
     "description": "Share notes as a link — a note on the wall — on your own self-hosted Lappu server.",
     "main": "main.js",
     "scripts": {

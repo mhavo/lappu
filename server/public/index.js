@@ -1,4 +1,4 @@
-const { parseHash, getIdFromHash, classifyId, decrypt, decryptBytes, cryptoAvailable, rewriteAttachmentSrc, attachmentUrl, attachmentMime, markdownForCopy, copyableUrl, formatParts, safeFileName, buildObsidianNewUrl, buildDownloadHref, pageTitle, formatExpires } = LappuViewer;
+const { parseHash, getIdFromHash, classifyId, decrypt, decryptBytes, cryptoAvailable, rewriteAttachmentSrc, attachmentUrl, attachmentMime, markdownForCopy, copyableUrl, formatParts, safeFileName, buildObsidianNewUrl, buildDownloadHref, pageTitle, formatTimestamp, formatExpires } = LappuViewer;
 const LANGUAGE_STORAGE_KEY = "lappu-language";
 
 let md = markdownit({
@@ -318,24 +318,21 @@ function renderNoteFooter() {
         return;
     let { meta, quote } = currentFooter;
     let parts = [];
+    // shared and expiry dates share one line
+    let dates = [];
 
     // Add timestamp if available
-    if (meta && meta.created) {
-        let date = new Date(meta.created * 1000);
-        let formatted = date.toLocaleDateString(undefined, {
-            day: "numeric",
-            month: "numeric",
-            year: "numeric",
-            hour: "2-digit",
-            minute: "2-digit"
-        });
-        parts.push($("<p>").addClass("note-timestamp").text(t("shared").replace("{date}", formatted)));
-    }
+    let created = formatTimestamp(meta && meta.created, language);
+    if (created)
+        dates.push(t("shared").replace("{date}", created));
 
     // Add expiry if the share has one
     let expires = formatExpires(meta && meta.expires, language);
     if (expires)
-        parts.push($("<p>").addClass("note-timestamp").text(t("expires").replace("{date}", expires)));
+        dates.push(t("expires").replace("{date}", expires));
+
+    if (dates.length)
+        parts.push($("<p>").addClass("note-timestamp").text(dates.join(" · ")));
 
     // Add quote if available (always inserted as text, never as HTML)
     if (quote && quote.quote) {

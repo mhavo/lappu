@@ -112,10 +112,13 @@ test("buildDownloadHref produces a plain-text data URL", () => {
     assert.equal(lib.buildDownloadHref("# a&b"), "data:text/plain;charset=utf-8,%23%20a%26b");
 });
 
-test("formatExpires formats unix seconds for the given language", () => {
-    const expires = 1_800_000_000;
-    assert.equal(lib.formatExpires(expires, "fi"), new Date(expires * 1000).toLocaleString("fi"));
-    assert.equal(lib.formatExpires(expires, "en"), new Date(expires * 1000).toLocaleString("en"));
+test("formatTimestamp formats unix seconds in the given language without seconds", () => {
+    const seconds = 1_800_000_000;
+    const options = { day: "numeric", month: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" };
+    assert.equal(lib.formatTimestamp(seconds, "fi"), new Date(seconds * 1000).toLocaleString("fi", options));
+    assert.equal(lib.formatTimestamp(seconds, "en"), new Date(seconds * 1000).toLocaleString("en", options));
+    assert.notEqual(lib.formatTimestamp(seconds, "fi"), lib.formatTimestamp(seconds, "en"));
+    assert.equal(lib.formatExpires(seconds, "fi"), lib.formatTimestamp(seconds, "fi"));
 });
 
 test("formatExpires returns null for a missing or invalid expiry", () => {

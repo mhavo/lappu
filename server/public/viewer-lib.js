@@ -109,13 +109,24 @@
 
     // The expiry of a share as a localized date and time, or null when the meta
     // has no (valid) expiry. `expires` is unix seconds.
-    function formatExpires(expires, lang) {
-        if (typeof expires !== "number" || !Number.isFinite(expires))
+    // Formats unix seconds as a date and time (no seconds) in the given language.
+    function formatTimestamp(seconds, lang) {
+        if (typeof seconds !== "number" || !Number.isFinite(seconds))
             return null;
-        const date = new Date(expires * 1000);
+        const date = new Date(seconds * 1000);
         if (Number.isNaN(date.getTime()))
             return null;
-        return date.toLocaleString(lang);
+        return date.toLocaleString(lang, {
+            day: "numeric",
+            month: "numeric",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit"
+        });
+    }
+
+    function formatExpires(expires, lang) {
+        return formatTimestamp(expires, lang);
     }
 
     // ---- SimpleTextCrypt 5.x decryption (see simplecrypter/src/crypter.ts) ----
@@ -298,7 +309,7 @@
 
     const api = {
         ID_PATTERN, parseHash, getIdFromHash, classifyId, escapeHtml, formatParts,
-        safeFileName, buildObsidianNewUrl, buildDownloadHref, pageTitle, formatExpires,
+        safeFileName, buildObsidianNewUrl, buildDownloadHref, pageTitle, formatTimestamp, formatExpires,
         CrypterError, decodeMessage, deriveKey, decrypt, decryptBytes, cryptoAvailable,
         ATTACHMENT_PATTERN, ATTACHMENT_PLACEHOLDER, isAttachmentName, attachmentMime, attachmentUrl, rewriteAttachmentSrc,
         markdownForCopy, copyableUrl

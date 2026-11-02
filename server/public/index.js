@@ -1,4 +1,4 @@
-const { parseHash, getIdFromHash, classifyId, decrypt, decryptBytes, cryptoAvailable, rewriteAttachmentSrc, attachmentUrl, attachmentMime, markdownForCopy, copyableUrl, formatParts, safeFileName, buildObsidianNewUrl, buildDownloadHref, pageTitle, formatTimestamp, formatExpires } = LappuViewer;
+const { parseHash, getIdFromHash, classifyId, decrypt, decryptBytes, cryptoAvailable, rewriteAttachmentSrc, attachmentUrl, attachmentMime, markdownForCopy, copyableUrl, formatParts, safeFileName, buildObsidianNewUrl, buildObsidianDailyUrl, shareLink, noteMetadata, buildDownloadHref, pageTitle, formatTimestamp, formatExpires } = LappuViewer;
 const LANGUAGE_STORAGE_KEY = "lappu-language";
 
 let md = markdownit({
@@ -109,6 +109,7 @@ function display() {
     download.removeAttr("href").removeAttr("download");
     open.removeAttr("href");
     window.document.title = genericTitle;
+    clearNoteMetadata();
     clearNoteFooter();
     clearAttachments();
     let id = getId();
@@ -212,11 +213,17 @@ function renderNote(t, id, kind, meta, password) {
         if (element)
             $(window).scrollTop($(element).offset().top);
 
-        // set download links
+        // set download links (with attachment references as absolute URLs, like the copy menu)
         let noteName = heading || window.document.title;
+        let exported = markdownForCopy(t, env.attachments, window.location.href);
         download.attr("download", `${safeFileName(noteName)}.md`);
-        download.attr("href", buildDownloadHref(t));
-        open.attr("href", buildObsidianNewUrl(noteName, t));
+        download.attr("href", buildDownloadHref(exported));
+        open.attr("href", buildObsidianNewUrl(noteName, exported));
+        if (currentNote)
+            currentNote.title = heading;
+
+        if (kind === "valid")
+            setNoteMetadata(heading, encrypted, meta);
 
         // load note footer with publication time (only for shared notes)
         if (kind === "valid")
@@ -403,6 +410,8 @@ function renderStaticStrings() {
     $("#copy-as-markdown").text(t("copyMarkdown"));
     $("#copy-as-plain").text(t("copyPlainText"));
     $("#copy-as-html").text(t("copyHtml"));
+    $("#add-to-obsidian").text(t("addToObsidian"));
+    $("#add-to-daily-note").text(t("addToDailyNote"));
     open.text(t("copyToObsidian"));
     $("#language-select").attr("aria-label", t("language"));
     $("#language-select button").each((_, b) => b.setAttribute("aria-pressed", String(b.dataset.lang === language)));
@@ -472,7 +481,11 @@ function setUpCopyButton() {
     });
     copyMenu.on("click", "button", e => {
         closeCopyMenu(true);
-        copyNote(e.currentTarget.dataset.format);
+        let { action, format } = e.currentTarget.dataset;
+        if (action)
+            sendToObsidian(action);
+        else
+            copyNote(format);
     });
     copyMenu.on("keydown", e => {
         let items = copyMenuItems();
@@ -519,6 +532,44 @@ function closeCopyMenu(returnFocus) {
 function setNoteToolsVisible(visible) {
     closeCopyMenu(false);
     noteTools[0].hidden = !visible;
+}
+
+// action: "obsidian-new" creates a note with the content, "obsidian-daily" appends
+// a link line to today's daily note. The link keeps the key only if the opened link had one.
+function sendToObsidian(action) {
+    if (!currentNote)
+        return;
+    let title = currentNote.title || genericTitle;
+    let href = window.location.href;
+    window.location.href = action === "obsidian-daily"
+        ? buildObsidianDailyUrl(title, shareLink(href, true))
+        : buildObsidianNewUrl(title, markdownForCopy(currentNote.markdown, currentNote.ctx, href));
+}
+
+// ---- Page metadata for clippers (Obsidian Web Clipper etc.) ----
+
+function setNoteMetadata(heading, encrypted, meta) {
+    let firstParagraph = main[0].querySelector("p");
+    let description = firstParagraph ? firstParagraph.textContent.replace(/\s+/g, " ").trim() : "";
+    if (description.length > 200)
+        description = description.substring(0, 199).trimEnd() + "…";
+    let { tags, schema } = noteMetadata({
+        title: heading,
+        description,
+        url: shareLink(window.location.href, false),
+        created: meta && meta.created,
+        expires: meta && meta.expires,
+        encrypted,
+        siteName: genericTitle
+    });
+    let head = $("head");
+    for (let tag of tags)
+        head.append($("<meta>").attr({ [tag.attr]: tag.key, content: tag.value, "data-lappu-meta": "" }));
+    head.append($("<script>").attr({ type: "application/ld+json", "data-lappu-meta": "" }).text(JSON.stringify(schema)));
+}
+
+function clearNoteMetadata() {
+    $("head [data-lappu-meta]").remove();
 }
 
 // format: "markdown" | "plain" | "html"

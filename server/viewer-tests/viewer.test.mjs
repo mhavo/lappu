@@ -108,6 +108,65 @@ test("buildObsidianNewUrl encodes spaces and unicode in the name", () => {
     assert.equal(url, "obsidian://new?name=Hyv%C3%A4%20nimi&content=x");
 });
 
+test("buildObsidianDailyUrl appends a title link line to the daily note", () => {
+    const url = lib.buildObsidianDailyUrl("Plan [v2]", "https://notes.example/#abcDEF12");
+    assert.ok(url.startsWith("obsidian://daily?"));
+    const params = new URLSearchParams(url.substring("obsidian://daily?".length));
+    assert.deepEqual([...params.keys()], ["content", "append"]);
+    assert.equal(params.get("content"), "- [Plan \\[v2\\]](<https://notes.example/#abcDEF12>)");
+    assert.equal(params.get("append"), "true");
+});
+
+test("buildObsidianDailyUrl keeps the line on one line and cannot inject parameters", () => {
+    const url = lib.buildObsidianDailyUrl("a\nb&overwrite=true", "https://x.example/a b>");
+    const params = new URLSearchParams(url.substring("obsidian://daily?".length));
+    assert.deepEqual([...params.keys()], ["content", "append"]);
+    assert.equal(params.get("content"), "- [a b&overwrite=true](<https://x.example/a%20b%3E>)");
+    assert.equal(new URLSearchParams(lib.buildObsidianDailyUrl("", "u").substring(17)).get("content"), "- [note](<u>)");
+});
+
+test("shareLink drops the anchor and keeps the key only on request", () => {
+    const href = "https://notes.example/#abcDEF12~a%2Db%7Ec-some-heading";
+    assert.equal(lib.shareLink(href, false), "https://notes.example/#abcDEF12");
+    const withKey = lib.shareLink(href, true);
+    assert.equal(withKey, "https://notes.example/#abcDEF12~a%2Db%7Ec");
+    assert.equal(lib.parseHash(new URL(withKey).hash).key, "a-b~c");
+    assert.equal(lib.shareLink("https://notes.example/#abcDEF12-heading", true), "https://notes.example/#abcDEF12");
+});
+
+test("noteMetadata describes a plain note for clippers", () => {
+    const { tags, schema } = lib.noteMetadata({
+        title: "Title", description: "Intro", url: "https://n.example/#abcDEF12",
+        created: 1_800_000_000, expires: 1_800_086_400, encrypted: false, siteName: "Lappu"
+    });
+    const byKey = Object.fromEntries(tags.map(t => [t.key, t]));
+    assert.equal(byKey["og:title"].value, "Title");
+    assert.equal(byKey["og:site_name"].value, "Lappu");
+    assert.equal(byKey["description"].attr, "name");
+    assert.equal(byKey["article:published_time"].value, new Date(1_800_000_000_000).toISOString());
+    assert.equal(byKey["article:expiration_time"].value, new Date(1_800_086_400_000).toISOString());
+    assert.equal(schema["@type"], "Article");
+    assert.equal(schema.headline, "Title");
+    assert.equal(schema.datePublished, byKey["article:published_time"].value);
+    assert.equal(schema.expires, byKey["article:expiration_time"].value);
+});
+
+test("noteMetadata never exposes an encrypted note's content", () => {
+    const { tags, schema } = lib.noteMetadata({
+        title: "Secret", description: "Secret text", url: "https://n.example/#abcDEF12",
+        created: 1_800_000_000, expires: null, encrypted: true, siteName: "Lappu"
+    });
+    assert.ok(!JSON.stringify({ tags, schema }).includes("Secret"));
+    assert.ok(tags.some(t => t.key === "article:published_time"));
+    assert.ok(!tags.some(t => t.key === "article:expiration_time"));
+});
+
+test("menu action labels exist in every language", () => {
+    for (const lang of i18n.languages)
+        for (const key of ["addToObsidian", "addToDailyNote"])
+            assert.ok(Object.prototype.hasOwnProperty.call(i18n.translations[lang], key), `${lang}.${key}`);
+});
+
 test("buildDownloadHref produces a plain-text data URL", () => {
     assert.equal(lib.buildDownloadHref("# a&b"), "data:text/plain;charset=utf-8,%23%20a%26b");
 });

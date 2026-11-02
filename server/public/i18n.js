@@ -30,6 +30,8 @@
             copyMarkdown: "Markdown",
             copyPlainText: "Plain text",
             copyHtml: "HTML",
+            addToObsidian: "Add to Obsidian",
+            addToDailyNote: "Add to daily note",
             copied: "Copied",
             copyFailed: "The browser did not allow copying",
             copyHtmlUnsupported: "This browser can't copy as HTML"
@@ -59,6 +61,8 @@
             copyMarkdown: "Markdown",
             copyPlainText: "Pelkkä teksti",
             copyHtml: "HTML",
+            addToObsidian: "Lisää Obsidianiin",
+            addToDailyNote: "Lisää päivän muistiinpanoon",
             copied: "Kopioitu",
             copyFailed: "Selain ei sallinut kopiointia",
             copyHtmlUnsupported: "Tämä selain ei osaa kopioida HTML-muodossa"

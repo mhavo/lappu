@@ -38,6 +38,8 @@ Then open the plugin settings and set:
 
 To share a note, use *Share as Lappu* in the file menu or *Share current file as Lappu* in the command palette. The link is copied to the clipboard. The *Lappu* view lists your shares and lets you copy, update or delete them.
 
+In the viewer, the *Copy* menu copies the note as Markdown, plain text or HTML. *Add to Obsidian* creates a new note from it, and *Add to daily note* appends a `- [title](link)` line to today's daily note (needs the Daily notes core plugin). The page also carries metadata for [Obsidian Web Clipper](https://obsidian.md/clipper) templates: `{{title}}`, `{{description}}`, `{{site}}`, `{{published}}`, and the expiry as `{{meta:property:article:expiration_time}}` or `{{schema:@Article:expires}}`. Encrypted notes only expose their dates and the link without the password.
+
 ## Self-hosting
 
 The server lives in [`server/`](server); the binary is built from `server/cmd/lappu` and the compose file builds an image named `lappu`. The included [`server/docker-compose.yml`](server/docker-compose.yml) is a starting point:

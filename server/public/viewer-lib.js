@@ -97,6 +97,55 @@
         return `obsidian://new?name=${encodeURIComponent(safeFileName(title))}&content=${encodeURIComponent(content)}`;
     }
 
+    // Appends a "- [title](link)" line to today's daily note (Daily notes core plugin).
+    function buildObsidianDailyUrl(title, link) {
+        const label = String(title ?? "").replace(/[\r\n]+/g, " ").replace(/([\\[\]])/g, "\\$1").trim() || "note";
+        const content = `- [${label}](<${String(link).replace(/[<>\s]/g, encodeURIComponent)}>)`;
+        return `obsidian://daily?content=${encodeURIComponent(content)}&append=true`;
+    }
+
+    // The link to a share without the heading anchor; the decryption key stays only when keepKey is set.
+    function shareLink(href, keepKey) {
+        const url = new URL(href);
+        const { id, key } = parseHash(url.hash);
+        // the key is encoded like the plugin's encodeLinkKey (src/encryption.ts)
+        const encodedKey = key ? encodeURIComponent(key).replace(/-/g, "%2D").replace(/~/g, "%7E") : "";
+        url.hash = id ? id + (keepKey && key ? `~${encodedKey}` : "") : "";
+        return url.href;
+    }
+
+    // Page metadata for clippers (e.g. Obsidian Web Clipper): meta tags and a
+    // schema.org Article. Encrypted notes never put their content here, only
+    // dates and the keyless link. `created` and `expires` are unix seconds.
+    function noteMetadata({ title, description, url, created, expires, encrypted, siteName }) {
+        const iso = seconds => typeof seconds === "number" && Number.isFinite(seconds)
+            && !Number.isNaN(new Date(seconds * 1000).getTime()) ? new Date(seconds * 1000).toISOString() : null;
+        const published = iso(created);
+        const expiresAt = iso(expires);
+        const headline = encrypted ? null : (title || null);
+        const summary = encrypted ? null : (description || null);
+        const tags = [
+            { attr: "property", key: "og:site_name", value: siteName },
+            { attr: "property", key: "og:type", value: "article" },
+            { attr: "property", key: "og:url", value: url },
+            { attr: "property", key: "og:title", value: headline },
+            { attr: "name", key: "description", value: summary },
+            { attr: "property", key: "og:description", value: summary },
+            { attr: "property", key: "article:published_time", value: published },
+            { attr: "property", key: "article:expiration_time", value: expiresAt }
+        ].filter(tag => tag.value);
+        const schema = { "@context": "https://schema.org", "@type": "Article", url, publisher: { "@type": "Organization", name: siteName } };
+        if (headline)
+            schema.headline = headline;
+        if (summary)
+            schema.description = summary;
+        if (published)
+            schema.datePublished = published;
+        if (expiresAt)
+            schema.expires = expiresAt;
+        return { tags, schema };
+    }
+
     // The page title for a note: the generic one for an encrypted note, so the
     // decrypted heading never reaches the title (history, bookmarks, tab lists).
     function pageTitle(heading, encrypted, genericTitle) {
@@ -107,9 +156,8 @@
         return `data:text/plain;charset=utf-8,${encodeURIComponent(content)}`;
     }
 
-    // The expiry of a share as a localized date and time, or null when the meta
-    // has no (valid) expiry. `expires` is unix seconds.
-    // Formats unix seconds as a date and time (no seconds) in the given language.
+    // Formats unix seconds as a date and time (no seconds) in the given language,
+    // or null when the value is not a valid time.
     function formatTimestamp(seconds, lang) {
         if (typeof seconds !== "number" || !Number.isFinite(seconds))
             return null;
@@ -125,6 +173,8 @@
         });
     }
 
+    // The expiry of a share as a localized date and time, or null when the meta
+    // has no (valid) expiry. `expires` is unix seconds.
     function formatExpires(expires, lang) {
         return formatTimestamp(expires, lang);
     }
@@ -309,7 +359,7 @@
 
     const api = {
         ID_PATTERN, parseHash, getIdFromHash, classifyId, escapeHtml, formatParts,
-        safeFileName, buildObsidianNewUrl, buildDownloadHref, pageTitle, formatTimestamp, formatExpires,
+        safeFileName, buildObsidianNewUrl, buildObsidianDailyUrl, shareLink, noteMetadata, buildDownloadHref, pageTitle, formatTimestamp, formatExpires,
         CrypterError, decodeMessage, deriveKey, decrypt, decryptBytes, cryptoAvailable,
         ATTACHMENT_PATTERN, ATTACHMENT_PLACEHOLDER, isAttachmentName, attachmentMime, attachmentUrl, rewriteAttachmentSrc,
         markdownForCopy, copyableUrl

@@ -291,6 +291,12 @@ img.attachment-broken {
     outline-offset: -2px;
 }
 
+#copy-menu .menu-separator {
+    height: 1px;
+    margin: 4px 0;
+    background: var(--tool-border);
+}
+
 #copy-menu {
     position: absolute;
     right: 0;

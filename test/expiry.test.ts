@@ -1,5 +1,5 @@
 import {describe, expect, it} from "vitest";
-import {buildShareBody, EXPIRY_OPTIONS, expiryToSeconds, isExpired, isExpiryOption, parseExpires} from "../src/expiry";
+import {buildShareBody, buildUpdateBody, EXPIRY_OPTIONS, expiryToSeconds, isExpired, isExpiryOption, parseExpires} from "../src/expiry";
 import {translations} from "../src/i18n";
 
 describe("expiryToSeconds", () => {
@@ -66,5 +66,19 @@ describe("expiry translations", () => {
             for (let o of EXPIRY_OPTIONS)
                 expect(translations[lang][`expiry.${o}`]).toBeTruthy();
         expect(translations.fi["expiry.never"]).toBe("Ei koskaan");
+    });
+});
+
+describe("encrypted request bodies", () => {
+    it("adds encrypted: true to the share body only when encrypting", () => {
+        expect(JSON.parse(buildShareBody("c", "week", true))).toEqual({content: "c", expiresIn: 7 * 86400, encrypted: true});
+        expect(JSON.parse(buildShareBody("c", "never", true))).toEqual({content: "c", encrypted: true});
+        expect(JSON.parse(buildShareBody("c", "never"))).toEqual({content: "c"});
+        expect(JSON.parse(buildShareBody("c", "never", false))).toEqual({content: "c"});
+    });
+
+    it("builds update bodies with the encrypted flag", () => {
+        expect(JSON.parse(buildUpdateBody("c"))).toEqual({content: "c"});
+        expect(JSON.parse(buildUpdateBody("c", true))).toEqual({content: "c", encrypted: true});
     });
 });

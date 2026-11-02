@@ -21,10 +21,20 @@ export function expiryToSeconds(option: ExpiryOption): number | undefined {
     return option === "never" ? undefined : SECONDS[option];
 }
 
-/** JSON body for creating a share; `expiresIn` is omitted for "never". */
-export function buildShareBody(content: string, option: ExpiryOption): string {
+/** JSON body for creating a share; `expiresIn` is omitted for "never", `encrypted` unless false. */
+export function buildShareBody(content: string, option: ExpiryOption, encrypted: boolean = false): string {
     let seconds = expiryToSeconds(option);
-    return JSON.stringify(seconds === undefined ? {content} : {content, expiresIn: seconds});
+    let body: Record<string, unknown> = {content};
+    if (seconds !== undefined)
+        body.expiresIn = seconds;
+    if (encrypted)
+        body.encrypted = true;
+    return JSON.stringify(body);
+}
+
+/** JSON body for updating a share. */
+export function buildUpdateBody(content: string, encrypted: boolean = false): string {
+    return JSON.stringify(encrypted ? {content, encrypted: true} : {content});
 }
 
 /** Unix seconds of expiry from a server response, or null when absent or invalid (older servers). */

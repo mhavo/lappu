@@ -110,6 +110,16 @@ export class LappuSettingsTab extends PluginSettingTab {
                 });
             }));
         group.addSetting(s => s
+            .setName(t("settings.defaultEncrypt.name"))
+            .setDesc(t("settings.defaultEncrypt.desc"))
+            .addToggle(toggle => {
+                toggle.setValue(this.plugin.settings.defaultEncrypt);
+                toggle.onChange(async v => {
+                    this.plugin.settings.defaultEncrypt = v;
+                    await this.plugin.saveSettings();
+                });
+            }));
+        group.addSetting(s => s
             .setName(t("settings.import.name"))
             .setDesc(t("settings.import.desc"))
             .addButton(b => b

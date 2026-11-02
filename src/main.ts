@@ -4,8 +4,10 @@ import {LappuSettingsTab} from "./settings-tab";
 import {LappuView} from "./view";
 import {Language, resolveLanguage, translate, TranslationKey} from "./i18n";
 import {baseUrl, buildHeaders, classifyResponse, isConfigured, Operation, ResponseKind, shareEndpoint} from "./http";
-import {buildShareBody, DEFAULT_EXPIRY, ExpiryOption, isExpiryOption, parseExpires} from "./expiry";
-import {ExpiryModal} from "./expiry-modal";
+import {buildShareBody, buildUpdateBody, DEFAULT_EXPIRY, isExpiryOption, parseExpires} from "./expiry";
+import {ShareModal} from "./share-modal";
+import {buildShareLink, confirmsEncryption, ShareOptions} from "./encryption";
+import {encrypt} from "./crypter";
 import {IMPORT_SOURCES, ImportSource, mergeImported} from "./import";
 
 interface ServerResponse {
@@ -321,21 +323,23 @@ export default class LappuPlugin extends Plugin {
         }), 10000);
     }
 
-    /** Asks which expiry a new share gets; resolves undefined if the user cancels. */
-    private chooseExpiry(): Promise<ExpiryOption | undefined> {
-        return new Promise(resolve => new ExpiryModal(this.app, this, resolve).open());
+    /** Asks for the options of a new share; resolves undefined if the user cancels. */
+    private chooseShareOptions(): Promise<ShareOptions | undefined> {
+        return new Promise(resolve => new ShareModal(this.app, this, resolve).open());
     }
 
-    /** Shares a file. Without an explicit expiry the user is asked, preselecting the default. */
-    async shareFile(file: TFile, expiry?: ExpiryOption): Promise<SharedItem> {
+    /** Shares a file. Without explicit options the user is asked, with defaults from the settings. */
+    async shareFile(file: TFile, options?: ShareOptions): Promise<SharedItem> {
         if (!this.ensureConfigured())
             return undefined;
-        expiry = expiry ?? await this.chooseExpiry();
-        if (!expiry)
+        options = options ?? await this.chooseShareOptions();
+        if (!options)
             return undefined;
         try {
+            let markdown = await this.preProcessMarkdown(file);
+            let content = options.encrypt ? await encrypt(options.password, markdown) : markdown;
             let response = await this.request("POST", shareEndpoint(this.settings.url), buildHeaders(this.settings.token),
-                buildShareBody(await this.preProcessMarkdown(file), expiry));
+                buildShareBody(content, options.expiry, options.encrypt));
             let kind = classifyResponse(response.status, response.text, "share");
             let data = response.json as Partial<SharedItem>;
             if (kind !== "ok" || !data || typeof data.id !== "string" || typeof data.password !== "string") {
@@ -343,6 +347,11 @@ export default class LappuPlugin extends Plugin {
                 return undefined;
             }
             let shared: SharedItem = {id: data.id, password: data.password, path: file.path, expires: parseExpires(data.expires)};
+            if (options.encrypt) {
+                shared.encrypted = true;
+                shared.encryptionPassword = options.password;
+                shared.passwordInLink = options.passwordInLink;
+            }
 
             this.settings.shared.push(shared);
             await this.saveSettings();
@@ -351,8 +360,11 @@ export default class LappuPlugin extends Plugin {
             await this.copyShareLink(shared, false);
             new Notice(this.t("notice.shared", {name: file.basename}));
             // Older servers ignore expiresIn; the user must not assume the share will vanish.
-            if (expiry !== "never" && shared.expires === null)
+            if (options.expiry !== "never" && shared.expires === null)
                 new Notice(this.t("notice.expiryUnsupported", {name: file.basename}), 10000);
+            // Older servers do not know `encrypted`; the viewer would show ciphertext.
+            if (options.encrypt && !confirmsEncryption(response.json))
+                new Notice(this.t("notice.encryptionUnsupported", {name: file.basename}), 10000);
             return shared;
         } catch (e) {
             this.showError("share", file.basename, String(e));
@@ -364,8 +376,10 @@ export default class LappuPlugin extends Plugin {
         if (!this.ensureConfigured())
             return false;
         try {
+            let encrypted = !!item.encrypted && !!item.encryptionPassword;
+            let markdown = await this.preProcessMarkdown(file);
             let response = await this.request("PATCH", shareEndpoint(this.settings.url, item.id), buildHeaders(this.settings.token, item.password),
-                JSON.stringify({content: await this.preProcessMarkdown(file)}));
+                buildUpdateBody(encrypted ? await encrypt(item.encryptionPassword, markdown) : markdown, encrypted));
             let kind = classifyResponse(response.status, response.text, "update");
             if (kind !== "ok") {
                 this.showError("update", file.basename, this.describeFailure(kind, response.status),
@@ -374,6 +388,9 @@ export default class LappuPlugin extends Plugin {
             }
             if (notice)
                 new Notice(this.t("notice.updated", {name: file.basename}));
+            // An explicit encrypted: false means the server stored ciphertext as plain text.
+            if (encrypted && response.json && (response.json as { encrypted?: unknown }).encrypted === false)
+                new Notice(this.t("notice.encryptionUnsupported", {name: file.basename}), 10000);
             return true;
         } catch (e) {
             this.showError("update", file.basename, String(e));
@@ -414,9 +431,17 @@ export default class LappuPlugin extends Plugin {
     }
 
     async copyShareLink(item: SharedItem, notice = true): Promise<void> {
-        await navigator.clipboard.writeText(`${baseUrl(this.settings.url)}#${item.id}`);
+        let password = item.encrypted && item.passwordInLink ? item.encryptionPassword : undefined;
+        await navigator.clipboard.writeText(buildShareLink(baseUrl(this.settings.url), item.id, password));
         if (notice)
             new Notice(this.t("notice.linkCopied", {name: removeExtension(item.path)}));
+    }
+
+    async copyPassword(item: SharedItem): Promise<void> {
+        if (!item.encryptionPassword)
+            return;
+        await navigator.clipboard.writeText(item.encryptionPassword);
+        new Notice(this.t("notice.passwordCopied", {name: removeExtension(item.path)}));
     }
 
     async preProcessMarkdown(file: TFile): Promise<string> {

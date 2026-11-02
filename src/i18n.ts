@@ -16,6 +16,7 @@ const en = {
     "action.update": "Update Lappu",
     "action.delete": "Delete Lappu",
     "action.open": "Open in Obsidian",
+    "action.copyPassword": "Copy password",
 
     "notice.shared": "Successfully shared {name} and copied link to clipboard",
     "notice.updated": "Successfully updated the Lappu for {name}",
@@ -24,6 +25,8 @@ const en = {
     "notice.linkCopied": "Copied link to {name} to clipboard",
     "notice.notConfigured": "Set the server URL and token in the Lappu settings first.",
     "notice.expiryUnsupported": "The server did not set an expiry, so {name} stays shared until you delete it.",
+    "notice.encryptionUnsupported": "The server did not confirm encryption, so {name} may be shown as unreadable text. Update the server.",
+    "notice.passwordCopied": "Copied the password of {name} to clipboard",
 
     "button.openSettings": "Open settings",
     "button.forceDeleteLocal": "Force-delete local information",
@@ -59,6 +62,8 @@ const en = {
     "settings.autoUpdate.desc": "Whether a file's share should automatically be updated when the file is changed from within Obsidian.",
     "settings.defaultExpiry.name": "Default expiry",
     "settings.defaultExpiry.desc": "How long a new share lasts by default. You can choose another time when sharing.",
+    "settings.defaultEncrypt.name": "Encrypt new shares by default",
+    "settings.defaultEncrypt.desc": "Whether the encrypt option is on by default when sharing. Note: the password of an encrypted share is stored in this plugin's data.json in your vault.",
     "settings.language.name": "Language",
     "settings.language.desc": "Language of this plugin. Command names change after Obsidian is restarted.",
     "settings.language.auto": "Automatic",
@@ -72,13 +77,25 @@ const en = {
     "view.fileMissing": "File does not exist anymore",
     "view.expires": "Expires {date}",
     "view.expired": "Expired {date}",
+    "view.encrypted": "Encrypted",
 
     "expiry.prompt": "Choose when the share expires",
     "expiry.default": "default",
     "expiry.never": "Never",
     "expiry.day": "1 day",
     "expiry.week": "1 week",
-    "expiry.month": "30 days"
+    "expiry.month": "30 days",
+
+    "share.title": "Share options",
+    "share.expiry": "Expires",
+    "share.encrypt": "Encrypt",
+    "share.encrypt.desc": "Encrypts the note in Obsidian before it is sent. The server never sees the password.",
+    "share.password": "Password",
+    "share.password.empty": "The password must not be empty.",
+    "share.passwordInLink": "Include password in link",
+    "share.passwordInLink.desc": "Anyone with the link can read the note. Off: share the password separately.",
+    "share.submit": "Share",
+    "share.cancel": "Cancel"
 };
 
 export type TranslationKey = keyof typeof en;
@@ -96,6 +113,7 @@ const fi: Record<TranslationKey, string> = {
     "action.update": "Päivitä lappu",
     "action.delete": "Poista lappu",
     "action.open": "Avaa Obsidianissa",
+    "action.copyPassword": "Kopioi salasana",
 
     "notice.shared": "{name} jaettiin ja linkki kopioitiin leikepöydälle",
     "notice.updated": "Muistiinpanon {name} lappu päivitettiin",
@@ -104,6 +122,8 @@ const fi: Record<TranslationKey, string> = {
     "notice.linkCopied": "Muistiinpanon {name} linkki kopioitiin leikepöydälle",
     "notice.notConfigured": "Aseta ensin palvelimen URL ja token Lappu-pluginin asetuksissa.",
     "notice.expiryUnsupported": "Palvelin ei asettanut vanhenemisaikaa, joten {name} pysyy jaettuna, kunnes poistat sen.",
+    "notice.encryptionUnsupported": "Palvelin ei vahvistanut salausta, joten {name} voi näkyä lukukelvottomana tekstinä. Päivitä palvelin.",
+    "notice.passwordCopied": "Muistiinpanon {name} salasana kopioitiin leikepöydälle",
 
     "button.openSettings": "Avaa asetukset",
     "button.forceDeleteLocal": "Poista paikalliset tiedot väkisin",
@@ -139,6 +159,8 @@ const fi: Record<TranslationKey, string> = {
     "settings.autoUpdate.desc": "Päivitetäänkö tiedoston jako automaattisesti, kun tiedostoa muutetaan Obsidianissa.",
     "settings.defaultExpiry.name": "Oletusvanhenemisaika",
     "settings.defaultExpiry.desc": "Kuinka kauan uusi jako on voimassa oletuksena. Voit valita toisen ajan jakaessasi.",
+    "settings.defaultEncrypt.name": "Salaa uudet jaot oletuksena",
+    "settings.defaultEncrypt.desc": "Onko salaus oletuksena päällä jakaessa. Huomaa: salatun jaon salasana tallennetaan tämän pluginin data.json-tiedostoon holvissasi.",
     "settings.language.name": "Kieli",
     "settings.language.desc": "Tämän pluginin kieli. Komentojen nimet vaihtuvat, kun Obsidian käynnistetään uudelleen.",
     "settings.language.auto": "Automaattinen",
@@ -152,13 +174,25 @@ const fi: Record<TranslationKey, string> = {
     "view.fileMissing": "Tiedostoa ei ole enää olemassa",
     "view.expires": "Vanhenee {date}",
     "view.expired": "Vanhentunut {date}",
+    "view.encrypted": "Salattu",
 
     "expiry.prompt": "Valitse, milloin jako vanhenee",
     "expiry.default": "oletus",
     "expiry.never": "Ei koskaan",
     "expiry.day": "1 päivä",
     "expiry.week": "1 viikko",
-    "expiry.month": "30 päivää"
+    "expiry.month": "30 päivää",
+
+    "share.title": "Jaon asetukset",
+    "share.expiry": "Vanhenee",
+    "share.encrypt": "Salaa",
+    "share.encrypt.desc": "Salaa muistiinpanon Obsidianissa ennen lähetystä. Palvelin ei koskaan näe salasanaa.",
+    "share.password": "Salasana",
+    "share.password.empty": "Salasana ei saa olla tyhjä.",
+    "share.passwordInLink": "Liitä salasana linkkiin",
+    "share.passwordInLink.desc": "Kuka tahansa linkin saanut voi lukea muistiinpanon. Pois päältä: jaa salasana erikseen.",
+    "share.submit": "Jaa",
+    "share.cancel": "Peruuta"
 };
 
 export const translations: Record<Language, Record<TranslationKey, string>> = {en, fi};

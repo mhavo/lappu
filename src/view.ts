@@ -1,4 +1,4 @@
-import {ButtonComponent, ItemView, TFile, WorkspaceLeaf} from "obsidian";
+import {ButtonComponent, ItemView, setIcon, TFile, WorkspaceLeaf} from "obsidian";
 import {isExpired} from "./expiry";
 import LappuPlugin, {removeExtension} from "./main";
 
@@ -20,7 +20,12 @@ export class LappuView extends ItemView {
             for (let shared of [...this.plugin.settings.shared].reverse()) {
                 let file = this.plugin.app.vault.getAbstractFileByPath(shared.path) as TFile;
                 let div = content.createDiv({cls: "lappu-shared-item"});
-                div.createSpan({cls: "lappu-shared-name", text: removeExtension(shared.path).split(/[/\\]/g).pop()});
+                let name = div.createSpan({cls: "lappu-shared-name"});
+                if (shared.encrypted) {
+                    let lock = name.createSpan({cls: "lappu-shared-lock", attr: {"aria-label": this.plugin.t("view.encrypted")}});
+                    setIcon(lock, "lock");
+                }
+                name.appendText(removeExtension(shared.path).split(/[/\\]/g).pop());
                 if (shared.path.match(/[/\\]/))
                     div.createSpan({cls: "lappu-shared-path", text: removeExtension(shared.path)});
                 if (!file)
@@ -39,6 +44,13 @@ export class LappuView extends ItemView {
                     .setTooltip(this.plugin.t("action.copy"))
                     .setIcon("link")
                     .onClick(async () => this.plugin.copyShareLink(shared));
+                if (shared.encrypted && shared.encryptionPassword && !shared.passwordInLink) {
+                    new ButtonComponent(div)
+                        .setClass("clickable-icon")
+                        .setTooltip(this.plugin.t("action.copyPassword"))
+                        .setIcon("key")
+                        .onClick(async () => this.plugin.copyPassword(shared));
+                }
                 if (file) {
                     new ButtonComponent(div)
                         .setClass("clickable-icon")

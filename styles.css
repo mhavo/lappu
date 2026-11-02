@@ -32,3 +32,20 @@
 .lappu-expired .lappu-shared-expiry {
     color: var(--text-error);
 }
+
+.lappu-share-modal .lappu-password-input {
+    width: 100%;
+    font-family: var(--font-monospace);
+}
+
+.lappu-shared-lock {
+    display: inline-flex;
+    vertical-align: middle;
+    margin-right: 4px;
+    color: var(--text-muted);
+}
+
+.lappu-shared-lock svg {
+    width: 14px;
+    height: 14px;
+}

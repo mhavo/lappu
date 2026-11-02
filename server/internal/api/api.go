@@ -35,7 +35,7 @@ const viewerCSP = "default-src 'none'; " +
 	"script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net/npm/ https://cdn.jsdelivr.net/gh/highlightjs/; " +
 	"style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net/npm/ https://cdn.jsdelivr.net/gh/highlightjs/ https://fonts.googleapis.com; " +
 	"font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net/npm/; " +
-	"img-src 'self' data: https:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+	"img-src 'self' data: blob: https:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
 // apiCSP applies to API responses, which are never meant to render as documents.
 const apiCSP = "default-src 'none'; frame-ancestors 'none'; sandbox"
@@ -117,11 +117,19 @@ func (s *server) share(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case q.Has("quote"):
 			s.quote(w)
+		case q.Has("att"):
+			s.getAttachment(w, r, q.Get("att"))
 		case q.Has("meta"):
 			s.meta(w, q.Get("id"))
 		default:
 			s.get(w, q.Get("id"))
 		}
+	case http.MethodPut:
+		if !q.Has("att") {
+			text(w, http.StatusMethodNotAllowed, "Unsupported method")
+			return
+		}
+		s.putAttachment(w, r)
 	case http.MethodPost, http.MethodPatch, http.MethodDelete:
 		s.write(w, r)
 	default:
@@ -218,20 +226,30 @@ func isHeader(rec []string) bool {
 		(strings.EqualFold(rec[1], "author") || strings.EqualFold(rec[1], "source"))
 }
 
-func (s *server) write(w http.ResponseWriter, r *http.Request) {
-	ip := limitKey(clientIP(r, s.TrustedProxies))
-	trusted := s.validToken(r)
+// gate applies the token check and failed-auth rate limiting shared by all
+// writes. ok is false when the response has been written.
+func (s *server) gate(w http.ResponseWriter, r *http.Request) (ip string, trusted, ok bool) {
+	ip = limitKey(clientIP(r, s.TrustedProxies))
+	trusted = s.validToken(r)
 	if !trusted {
 		if s.limiter.blocked(ip) || (r.Method == http.MethodPost && s.creates.blocked(ip)) {
 			text(w, http.StatusTooManyRequests, "Too many requests")
-			return
+			return ip, trusted, false
 		}
 		if !s.AllowAnonymous {
 			s.limiter.charge(ip)
 			s.Logger.Warn("invalid token", "ip", ip)
 			text(w, http.StatusUnauthorized, "Invalid token")
-			return
+			return ip, trusted, false
 		}
+	}
+	return ip, trusted, true
+}
+
+func (s *server) write(w http.ResponseWriter, r *http.Request) {
+	ip, trusted, ok := s.gate(w, r)
+	if !ok {
+		return
 	}
 
 	var id, password string
@@ -247,26 +265,10 @@ func (s *server) write(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var content string
-	var expiresIn int64
-	var encrypted *bool
+	var req writeBody
 	if r.Method != http.MethodDelete {
-		var raw json.RawMessage
-		var ok bool
-		var rawEnc json.RawMessage
-		if content, raw, rawEnc, ok = s.readContent(w, r); !ok {
+		if req, ok = s.readBody(w, r); !ok {
 			return
-		}
-		if encrypted, ok = parseEncrypted(rawEnc); !ok {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid encrypted"})
-			return
-		}
-		// Expiry is only set on creation; PATCH ignores it entirely.
-		if r.Method == http.MethodPost {
-			if expiresIn, ok = parseExpiresIn(raw); !ok {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid expiresIn"})
-				return
-			}
 		}
 	}
 
@@ -274,7 +276,7 @@ func (s *server) write(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 		var share store.Share
-		if share, err = s.Store.CreateWith(content, expiresIn, encrypted != nil && *encrypted); err == nil {
+		if share, err = s.Store.CreateFull(req.content, req.expiresIn, req.encrypted != nil && *req.encrypted, req.attachments); err == nil {
 			if !trusted {
 				s.creates.charge(ip)
 			}
@@ -282,20 +284,111 @@ func (s *server) write(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case http.MethodPatch:
-		err = s.Store.UpdateWith(id, password, content, encrypted)
+		var res store.UpdateResult
+		if res, err = s.Store.UpdateFull(id, password, req.content, req.encrypted, req.attachments); err == nil {
+			writeJSON(w, http.StatusOK, res)
+			return
+		}
 	case http.MethodDelete:
 		err = s.Store.Delete(id, password)
 	}
 	if errors.Is(err, store.ErrUnauthorized) && !trusted {
 		s.limiter.charge(ip)
 	}
-	if errors.Is(err, store.ErrNotCiphertext) {
+	if errors.Is(err, store.ErrNotCiphertext) || errors.Is(err, store.ErrInvalidAttachments) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	if err != nil {
 		s.storeError(w, err)
 	}
+}
+
+// putAttachment stores the raw request body as a declared attachment.
+func (s *server) putAttachment(w http.ResponseWriter, r *http.Request) {
+	ip, trusted, ok := s.gate(w, r)
+	if !ok {
+		return
+	}
+	id, name, ok := splitAttachment(r.URL.Query().Get("att"))
+	password := r.Header.Get("Password")
+	if !ok || password == "" {
+		text(w, http.StatusBadRequest, "No id or password")
+		return
+	}
+	fail := func(err error) {
+		if errors.Is(err, store.ErrUnauthorized) && !trusted {
+			s.limiter.charge(ip)
+		}
+		s.attachmentError(w, err)
+	}
+	// Authorize before reading the body so unauthenticated clients cannot make us buffer it.
+	stored, err := s.Store.CheckAttachment(id, password, name)
+	if err != nil {
+		fail(err)
+		return
+	}
+	if stored {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	limit := s.Store.MaxAttachmentBytes()
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
+	if _, tooLarge := errors.AsType[*http.MaxBytesError](err); tooLarge {
+		text(w, http.StatusRequestEntityTooLarge, "Attachment too large")
+		return
+	}
+	if err != nil {
+		text(w, http.StatusBadRequest, "Bad body")
+		return
+	}
+	if err := s.Store.PutAttachment(id, password, name, data); err != nil {
+		fail(err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *server) attachmentError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, store.ErrNotDeclared):
+		text(w, http.StatusBadRequest, "Attachment not declared")
+	case errors.Is(err, store.ErrHashMismatch):
+		text(w, http.StatusBadRequest, "Hash mismatch")
+	case errors.Is(err, store.ErrTooLarge):
+		text(w, http.StatusRequestEntityTooLarge, "Attachment too large")
+	default:
+		s.storeError(w, err)
+	}
+}
+
+// splitAttachment splits "<id>/<name>"; both parts are validated.
+func splitAttachment(v string) (id, name string, ok bool) {
+	id, name, found := strings.Cut(v, "/")
+	return id, name, found && store.ValidID(id) && store.ValidAttachmentName(name)
+}
+
+func (s *server) getAttachment(w http.ResponseWriter, r *http.Request, v string) {
+	id, name, ok := splitAttachment(v)
+	if !ok {
+		text(w, http.StatusNotFound, "Not found")
+		return
+	}
+	f, encrypted, err := s.Store.Attachment(id, name)
+	if err != nil {
+		s.storeError(w, err)
+		return
+	}
+	defer f.Close()
+	h := w.Header()
+	if encrypted {
+		h.Set("Content-Type", "application/octet-stream")
+	} else {
+		h.Set("Content-Type", store.AttachmentContentType(name))
+	}
+	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	h.Set("Cache-Control", "private, max-age=86400")
+	http.ServeContent(w, r, "", time.Time{}, f)
 }
 
 // validToken compares the bearer token in constant time.
@@ -337,24 +430,62 @@ func parseEncrypted(raw json.RawMessage) (*bool, bool) {
 	return &b, true
 }
 
-// readContent decodes the request body; expiresIn is returned raw for the
-// caller to validate (only POST uses it).
-func (s *server) readContent(w http.ResponseWriter, r *http.Request) (string, json.RawMessage, json.RawMessage, bool) {
+// writeBody is the decoded JSON body of POST and PATCH.
+type writeBody struct {
+	content     string
+	expiresIn   int64
+	encrypted   *bool
+	attachments []string // nil = absent
+}
+
+// readBody decodes and validates the request body, answering with an error
+// itself when it is bad. expiresIn is only read for POST (PATCH ignores it).
+func (s *server) readBody(w http.ResponseWriter, r *http.Request) (writeBody, bool) {
 	var body struct {
-		Content   *string         `json:"content"`
-		ExpiresIn json.RawMessage `json:"expiresIn"`
-		Encrypted json.RawMessage `json:"encrypted"`
+		Content     *string         `json:"content"`
+		ExpiresIn   json.RawMessage `json:"expiresIn"`
+		Encrypted   json.RawMessage `json:"encrypted"`
+		Attachments json.RawMessage `json:"attachments"`
 	}
 	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, s.MaxBodyBytes)).Decode(&body)
 	if _, tooLarge := errors.AsType[*http.MaxBytesError](err); tooLarge {
 		text(w, http.StatusRequestEntityTooLarge, "Request too large")
-		return "", nil, nil, false
+		return writeBody{}, false
 	}
 	if err != nil || body.Content == nil {
 		text(w, http.StatusBadRequest, "No content")
-		return "", nil, nil, false
+		return writeBody{}, false
 	}
-	return *body.Content, body.ExpiresIn, body.Encrypted, true
+	req := writeBody{content: *body.Content}
+	var ok bool
+	if req.encrypted, ok = parseEncrypted(body.Encrypted); !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid encrypted"})
+		return writeBody{}, false
+	}
+	if req.attachments, ok = parseAttachments(body.Attachments); !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": store.ErrInvalidAttachments.Error()})
+		return writeBody{}, false
+	}
+	if r.Method == http.MethodPost {
+		if req.expiresIn, ok = parseExpiresIn(body.ExpiresIn); !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid expiresIn"})
+			return writeBody{}, false
+		}
+	}
+	return req, true
+}
+
+// parseAttachments accepts an absent field (nil) or an array of strings
+// (an empty array is non-nil); null and other types are rejected.
+func parseAttachments(raw json.RawMessage) ([]string, bool) {
+	if len(raw) == 0 {
+		return nil, true
+	}
+	var names []string
+	if err := json.Unmarshal(raw, &names); err != nil || names == nil {
+		return nil, false
+	}
+	return names, true
 }
 
 func (s *server) storeError(w http.ResponseWriter, err error) {

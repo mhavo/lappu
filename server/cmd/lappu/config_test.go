@@ -69,14 +69,16 @@ func TestConfigTokenFile(t *testing.T) {
 
 func TestConfigErrors(t *testing.T) {
 	cases := map[string]map[string]string{
-		"no token":           {},
-		"short token":        {"LAPPU_UPLOAD_TOKEN": "short"},
-		"both token sources": {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_UPLOAD_TOKEN_FILE": "/x"},
-		"missing token file": {"LAPPU_UPLOAD_TOKEN_FILE": "/does/not/exist"},
-		"bad anonymous flag": {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_ALLOW_ANONYMOUS_UPLOADS": "yes please"},
-		"bad body limit":     {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_MAX_BODY_BYTES": "0"},
-		"bad proxy":          {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_TRUSTED_PROXIES": "nope"},
-		"short anon token":   {"LAPPU_UPLOAD_TOKEN": "short", "LAPPU_ALLOW_ANONYMOUS_UPLOADS": "true"},
+		"no token":                   {},
+		"short token":                {"LAPPU_UPLOAD_TOKEN": "short"},
+		"both token sources":         {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_UPLOAD_TOKEN_FILE": "/x"},
+		"missing token file":         {"LAPPU_UPLOAD_TOKEN_FILE": "/does/not/exist"},
+		"bad anonymous flag":         {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_ALLOW_ANONYMOUS_UPLOADS": "yes please"},
+		"bad body limit":             {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_MAX_BODY_BYTES": "0"},
+		"bad attachment limit":       {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_MAX_ATTACHMENT_BYTES": "-1"},
+		"bad share attachment limit": {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_MAX_SHARE_ATTACHMENT_BYTES": "x"},
+		"bad proxy":                  {"LAPPU_UPLOAD_TOKEN": token, "LAPPU_TRUSTED_PROXIES": "nope"},
+		"short anon token":           {"LAPPU_UPLOAD_TOKEN": "short", "LAPPU_ALLOW_ANONYMOUS_UPLOADS": "true"},
 	}
 	for name, env := range cases {
 		if _, err := loadConfig(envFrom(env)); err == nil {
@@ -115,5 +117,17 @@ func TestConfigRejectsOldJSPVariables(t *testing.T) {
 	// Empty (or whitespace-only) old variables are ignored.
 	if _, err := loadConfig(envFrom(map[string]string{"LAPPU_UPLOAD_TOKEN": token, "JSP_LISTEN": " "})); err != nil {
 		t.Errorf("empty JSP_LISTEN: %v", err)
+	}
+}
+
+func TestConfigAttachmentLimits(t *testing.T) {
+	c, err := loadConfig(envFrom(map[string]string{"LAPPU_UPLOAD_TOKEN": token}))
+	if err != nil || c.MaxAttachmentBytes != 10<<20 || c.MaxShareAttachmentBytes != 50<<20 {
+		t.Errorf("defaults: %+v %v", c, err)
+	}
+	c, err = loadConfig(envFrom(map[string]string{"LAPPU_UPLOAD_TOKEN": token,
+		"LAPPU_MAX_ATTACHMENT_BYTES": "5", "LAPPU_MAX_SHARE_ATTACHMENT_BYTES": "9"}))
+	if err != nil || c.MaxAttachmentBytes != 5 || c.MaxShareAttachmentBytes != 9 {
+		t.Errorf("custom: %+v %v", c, err)
 	}
 }

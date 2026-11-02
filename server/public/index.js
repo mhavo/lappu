@@ -1,4 +1,4 @@
-const { parseHash, getIdFromHash, classifyId, decrypt, cryptoAvailable, formatParts, safeFileName, buildObsidianNewUrl, buildDownloadHref, formatExpires } = LappuViewer;
+const { parseHash, getIdFromHash, classifyId, decrypt, decryptBytes, cryptoAvailable, rewriteAttachmentSrc, attachmentUrl, attachmentMime, formatParts, safeFileName, buildObsidianNewUrl, buildDownloadHref, formatExpires } = LappuViewer;
 const LANGUAGE_STORAGE_KEY = "lappu-language";
 
 let md = markdownit({
@@ -41,7 +41,23 @@ for (let [rule, pattern, replacement] of rulesToReplace) {
     };
 }
 
+// Images that reference attachments (lappu-att:<name>) are pointed at the server
+// (share.php?att=<id>/<name>) or, in encrypted shares, at a placeholder that
+// loadEncryptedImages() replaces. The note's id and encryption come from env.attachments.
+let defaultImageRule = md.renderer.rules.image;
+md.renderer.rules.image = (tokens, idx, options, env, self) => {
+    let token = tokens[idx];
+    let rewritten = rewriteAttachmentSrc(token.attrGet("src"), env && env.attachments);
+    if (rewritten) {
+        token.attrSet("src", rewritten.src);
+        if (rewritten.name)
+            token.attrSet("data-lappu-att", rewritten.name);
+    }
+    return defaultImageRule(tokens, idx, options, env, self);
+};
+
 let main = $("#main");
+let attachmentStatus = $("#attachment-status");
 let noteFooter = $("#note-footer");
 let download = $("#download-markdown");
 let open = $("#open-in-obsidian");
@@ -51,6 +67,11 @@ let language = LappuI18n.resolveLanguage(readStoredLanguage(), navigator.languag
 let currentMessage = null;
 // the last loaded note footer data, so it can be re-rendered on language change
 let currentFooter = null;
+
+// the progress of decrypting an encrypted note's images ({ done, total }), or null
+let attachmentProgress = null;
+// blob: URLs of decrypted images of the current note
+let blobUrls = [];
 
 // bumped on every display() so that late responses of an abandoned note are ignored
 let displayGeneration = 0;
@@ -70,6 +91,7 @@ function display() {
     let generation = ++displayGeneration;
     showMessage({ key: "loading" });
     clearNoteFooter();
+    clearAttachments();
     let id = getId();
     let kind = classifyId(id);
     if (kind === "invalid") {
@@ -119,7 +141,7 @@ async function openEncrypted(ciphertext, id, meta, generation) {
         try {
             let text = await decrypt(password, ciphertext);
             if (generation === displayGeneration)
-                renderNote(text, id, "valid", meta);
+                renderNote(text, id, "valid", meta, password);
         } catch (e) {
             if (generation !== displayGeneration)
                 return;
@@ -142,10 +164,15 @@ function showPasswordForm(attempt, errorKey) {
     showMessage({ key: "encryptedNote", form: { attempt, errorKey } });
 }
 
-function renderNote(t, id, kind, meta) {
+// password is only given for encrypted notes; it is used to decrypt their images.
+function renderNote(t, id, kind, meta, password) {
     currentMessage = null;
+    let encrypted = meta && meta.encrypted === true;
+    let env = kind === "valid" ? { attachments: { id, encrypted } } : {};
     // assigned via innerHTML (not jQuery .html()) so that nothing that slipped through sanitizing runs as a script
-    main[0].innerHTML = DOMPurify.sanitize(md.render(t));
+    main[0].innerHTML = DOMPurify.sanitize(md.render(t, env));
+    if (kind === "valid" && encrypted && password)
+        loadEncryptedImages(id, password, displayGeneration);
 
     $(() => {
         // change title
@@ -171,6 +198,79 @@ function renderNote(t, id, kind, meta) {
         if (kind === "valid")
             loadNoteFooter(id, meta);
     });
+}
+
+function clearAttachments() {
+    for (let url of blobUrls)
+        URL.revokeObjectURL(url);
+    blobUrls = [];
+    attachmentProgress = null;
+    renderAttachmentProgress();
+}
+
+function renderAttachmentProgress() {
+    attachmentStatus.text(attachmentProgress ? t("decryptingImages")
+        .replace("{done}", attachmentProgress.done).replace("{total}", attachmentProgress.total) : "");
+}
+
+// Fetches, decrypts and shows the images of an encrypted note one at a time:
+// every attachment has its own Argon2 run, which blocks the main thread.
+async function loadEncryptedImages(id, password, generation) {
+    let images = new Map(); // name -> <img> elements
+    for (let img of main[0].querySelectorAll("img[data-lappu-att]")) {
+        let name = img.getAttribute("data-lappu-att");
+        if (!attachmentUrl(id, name)) {
+            markImageBroken(img);
+            continue;
+        }
+        if (!images.has(name))
+            images.set(name, []);
+        images.get(name).push(img);
+    }
+    if (!images.size)
+        return;
+    attachmentProgress = { done: 0, total: images.size };
+    renderAttachmentProgress();
+    for (let [name, elements] of images) {
+        // let the browser paint the progress before Argon2 blocks the main thread
+        await new Promise(resolve => setTimeout(resolve, 50));
+        if (generation !== displayGeneration)
+            return;
+        let blobUrl = null;
+        try {
+            let response = await fetch(attachmentUrl(id, name));
+            if (!response.ok)
+                throw new Error(`HTTP ${response.status}`);
+            let packet = new Uint8Array(await response.arrayBuffer());
+            let bytes = await decryptBytes(password, packet);
+            blobUrl = URL.createObjectURL(new Blob([bytes], { type: attachmentMime(name) }));
+        } catch (e) {
+            // shown as a broken image below
+        }
+        if (generation !== displayGeneration) {
+            if (blobUrl)
+                URL.revokeObjectURL(blobUrl);
+            return;
+        }
+        if (blobUrl)
+            blobUrls.push(blobUrl);
+        for (let img of elements) {
+            if (blobUrl)
+                img.src = blobUrl;
+            else
+                markImageBroken(img);
+        }
+        attachmentProgress = { done: attachmentProgress.done + 1, total: attachmentProgress.total };
+        renderAttachmentProgress();
+    }
+    attachmentProgress = null;
+    renderAttachmentProgress();
+}
+
+function markImageBroken(img) {
+    img.removeAttribute("src");
+    img.classList.add("attachment-broken");
+    img.title = t("imageFailed");
 }
 
 function loadNoteFooter(id, meta) {
@@ -283,6 +383,7 @@ function applyLanguage() {
     renderStaticStrings();
     renderMessage();
     renderNoteFooter();
+    renderAttachmentProgress();
 }
 
 function setLanguage(lang) {

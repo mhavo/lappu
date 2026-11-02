@@ -194,3 +194,97 @@ test("decrypt reports unavailable without argon2id", async () => {
     await assert.rejects(lib.decrypt("x", vectors[0].message, { argon2id: null, subtle: {} }),
         e => e.code === "unavailable");
 });
+
+// ---- attachments ----
+
+const H = "0123456789abcdef".repeat(4);
+
+test("isAttachmentName accepts only <sha256 hex>.<image ext>", () => {
+    for (const ext of ["png", "jpg", "jpeg", "gif", "webp", "avif"])
+        assert.ok(lib.isAttachmentName(`${H}.${ext}`), ext);
+    for (const bad of ["", H, `${H}.svg`, `${H}.PNG`, `${H}.png\n`, `${H.toUpperCase()}.png`, `${H.slice(1)}.png`,
+        `${H}a.png`, `../${H}.png`, `${H}.png/../x`, `x/${H}.png`, `${H}.png?x`, null, undefined, 5])
+        assert.ok(!lib.isAttachmentName(bad), String(bad));
+});
+
+test("attachmentMime maps the extension and rejects invalid names", () => {
+    assert.equal(lib.attachmentMime(`${H}.png`), "image/png");
+    assert.equal(lib.attachmentMime(`${H}.jpg`), "image/jpeg");
+    assert.equal(lib.attachmentMime(`${H}.jpeg`), "image/jpeg");
+    assert.equal(lib.attachmentMime(`${H}.gif`), "image/gif");
+    assert.equal(lib.attachmentMime(`${H}.webp`), "image/webp");
+    assert.equal(lib.attachmentMime(`${H}.avif`), "image/avif");
+    assert.equal(lib.attachmentMime(`${H}.svg`), null);
+});
+
+test("attachmentUrl is built only from a valid id and name", () => {
+    assert.equal(lib.attachmentUrl("abcd1234", `${H}.png`), `share.php?att=abcd1234/${H}.png`);
+    assert.equal(lib.attachmentUrl("abcd1234&x=1", `${H}.png`), null);
+    assert.equal(lib.attachmentUrl("abcd1234", `${H}.png&x=1`), null);
+    assert.equal(lib.attachmentUrl(undefined, `${H}.png`), null);
+});
+
+test("rewriteAttachmentSrc leaves other sources alone", () => {
+    const ctx = { id: "abcd1234", encrypted: false };
+    for (const src of ["https://example.com/a.png", "a.png", "data:image/png;base64,AAAA", "", undefined, null])
+        assert.equal(lib.rewriteAttachmentSrc(src, ctx), null);
+});
+
+test("rewriteAttachmentSrc points an unencrypted attachment at the server", () => {
+    assert.deepEqual(lib.rewriteAttachmentSrc(`lappu-att:${H}.webp`, { id: "abcd1234", encrypted: false }),
+        { src: `share.php?att=abcd1234/${H}.webp`, name: null });
+});
+
+test("rewriteAttachmentSrc uses a placeholder and the name for encrypted shares", () => {
+    assert.deepEqual(lib.rewriteAttachmentSrc(`lappu-att:${H}.png`, { id: "abcd1234", encrypted: true }),
+        { src: lib.ATTACHMENT_PLACEHOLDER, name: `${H}.png` });
+});
+
+test("rewriteAttachmentSrc never lets a bad name or a missing share produce a URL", () => {
+    const ctx = { id: "abcd1234", encrypted: false };
+    const blank = { src: "", name: null };
+    for (const src of [`lappu-att:${H}.svg`, "lappu-att:", "lappu-att:../x.png", `lappu-att:${H}.png?x=1`,
+        `lappu-att:abcd1234/${H}.png`, "lappu-att:https://evil.example/a.png", `lappu-att:${H}.png#x`])
+        assert.deepEqual(lib.rewriteAttachmentSrc(src, ctx), blank, src);
+    assert.deepEqual(lib.rewriteAttachmentSrc(`lappu-att:${H}.png`, undefined), blank);
+    assert.deepEqual(lib.rewriteAttachmentSrc(`lappu-att:${H}.png`, { id: "bad id", encrypted: false }), blank);
+    // the scheme match is case-insensitive, but the name is still validated
+    assert.deepEqual(lib.rewriteAttachmentSrc(`LAPPU-ATT:${H}.png`, ctx),
+        { src: `share.php?att=abcd1234/${H}.png`, name: null });
+});
+
+// Encrypts like the plugin does for attachments: IV (12) || ciphertext || tag (16), binary.
+async function encryptPacket(password, bytes) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const raw = await argon2id({ password, salt: iv, iterations: 5, memorySize: 65536, parallelism: 2, hashLength: 32, outputType: "binary" });
+    const key = await crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt"]);
+    const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, tagLength: 128 }, key, bytes));
+    const packet = new Uint8Array(12 + sealed.length);
+    packet.set(iv);
+    packet.set(sealed, 12);
+    return packet;
+}
+
+test("decryptBytes opens a binary packet", async () => {
+    const data = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 255, 1, 2, 3]);
+    const packet = await encryptPacket("pässword", data);
+    assert.deepEqual(await lib.decryptBytes("pässword", packet, deps), data);
+});
+
+test("decryptBytes rejects a wrong password, tampering, short packets and an empty password", async () => {
+    const packet = await encryptPacket("secret", new Uint8Array([1, 2, 3]));
+    await assert.rejects(lib.decryptBytes("wrong", packet, deps), e => e.code === "decrypt-failed");
+    const tampered = packet.slice();
+    tampered[tampered.length - 1] ^= 1;
+    await assert.rejects(lib.decryptBytes("secret", tampered, deps), e => e.code === "decrypt-failed");
+    await assert.rejects(lib.decryptBytes("secret", packet.subarray(0, 27), deps), e => e.code === "invalid-format");
+    await assert.rejects(lib.decryptBytes("secret", new Uint8Array(0), deps), e => e.code === "invalid-format");
+    await assert.rejects(lib.decryptBytes("", packet, deps), e => e.code === "empty-password");
+});
+
+test("attachment translations exist in every language", () => {
+    for (const lang of i18n.languages) {
+        assert.match(i18n.translate(lang, "decryptingImages"), /\{done\}.*\{total\}/);
+        assert.notEqual(i18n.translate(lang, "imageFailed"), "imageFailed");
+    }
+});

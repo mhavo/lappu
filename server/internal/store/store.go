@@ -28,7 +28,64 @@ var (
 	// ErrNotCiphertext is returned when an encrypted share's content is empty or
 	// is not base64 text, which would mean a client leaks plaintext.
 	ErrNotCiphertext = errors.New("encrypted content must be non-empty base64 text")
+	// ErrInvalidAttachments is returned for a bad attachment name or too many names.
+	ErrInvalidAttachments = errors.New("invalid attachments")
+	// ErrNotDeclared is returned when an uploaded attachment is not in the share's list.
+	ErrNotDeclared = errors.New("attachment not declared")
+	// ErrHashMismatch is returned when the uploaded bytes do not hash to the name.
+	ErrHashMismatch = errors.New("attachment hash mismatch")
+	// ErrTooLarge is returned when an attachment exceeds the per-file or per-share limit.
+	ErrTooLarge = errors.New("attachment too large")
 )
+
+// Attachment limits when SetAttachmentLimits is not called.
+const (
+	DefaultMaxAttachmentBytes      = 10 << 20
+	DefaultMaxShareAttachmentBytes = 50 << 20
+	// MaxAttachments is the most attachments one share can declare.
+	MaxAttachments = 100
+)
+
+var attachmentPattern = regexp.MustCompile(`^[a-f0-9]{64}\.(png|jpe?g|gif|webp|avif)$`)
+
+// ValidAttachmentName reports whether name is <sha256 hex>.<image ext>.
+func ValidAttachmentName(name string) bool { return attachmentPattern.MatchString(name) }
+
+// AttachmentContentType is the MIME type for a valid attachment name's extension.
+func AttachmentContentType(name string) string {
+	switch name[strings.LastIndexByte(name, '.')+1:] {
+	case "png":
+		return "image/png"
+	case "jpg", "jpeg":
+		return "image/jpeg"
+	case "gif":
+		return "image/gif"
+	case "webp":
+		return "image/webp"
+	case "avif":
+		return "image/avif"
+	}
+	return "application/octet-stream"
+}
+
+// normalizeAttachments validates names and removes duplicates, keeping order.
+func normalizeAttachments(names []string) ([]string, error) {
+	out := make([]string, 0, len(names))
+	seen := make(map[string]bool, len(names))
+	for _, n := range names {
+		if !ValidAttachmentName(n) {
+			return nil, ErrInvalidAttachments
+		}
+		if !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	if len(out) > MaxAttachments {
+		return nil, ErrInvalidAttachments
+	}
+	return out, nil
+}
 
 var ciphertextPattern = regexp.MustCompile(`^[A-Za-z0-9+/=\s]+$`)
 
@@ -51,6 +108,8 @@ type Meta struct {
 	Updated        int64  `json:"updated,omitempty"`
 	Expires        *int64 `json:"expires"`
 	Encrypted      bool   `json:"encrypted"`
+	// Attachments are the names the note references; files live in <id>.att/.
+	Attachments []string `json:"attachments,omitempty"`
 }
 
 // Share is returned once on creation; Password is never stored in plaintext.
@@ -60,6 +119,14 @@ type Share struct {
 	Created   int64  `json:"created"`
 	Expires   *int64 `json:"expires"` // unix seconds, null = never
 	Encrypted bool   `json:"encrypted"`
+	// Missing are the declared attachments that are not stored yet.
+	Missing []string `json:"missing"`
+}
+
+// UpdateResult is what a successful update reports.
+type UpdateResult struct {
+	Encrypted bool     `json:"encrypted"`
+	Missing   []string `json:"missing"`
 }
 
 // MaxExpiresIn is the longest allowed lifetime of a share, in seconds (365 days).
@@ -69,6 +136,8 @@ type Store struct {
 	dir   string
 	locks [256]sync.Mutex
 	now   func() time.Time
+
+	maxAttachment, maxShareAttachments int64
 }
 
 // New opens (and creates, mode 0700) the data directory.
@@ -76,11 +145,20 @@ func New(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	return &Store{dir: dir, now: time.Now}, nil
+	return &Store{dir: dir, now: time.Now,
+		maxAttachment: DefaultMaxAttachmentBytes, maxShareAttachments: DefaultMaxShareAttachmentBytes}, nil
 }
 
 // SetClock replaces the time source; for tests, call before first use.
 func (s *Store) SetClock(now func() time.Time) { s.now = now }
+
+// SetAttachmentLimits sets the per-file and per-share byte limits; call before first use.
+func (s *Store) SetAttachmentLimits(perFile, perShare int64) {
+	s.maxAttachment, s.maxShareAttachments = perFile, perShare
+}
+
+// MaxAttachmentBytes is the per-file limit.
+func (s *Store) MaxAttachmentBytes() int64 { return s.maxAttachment }
 
 // expired reports whether m has an expiry that has been reached.
 func (s *Store) expired(m Meta) bool {
@@ -97,6 +175,7 @@ func (s *Store) lock(id string) func() {
 
 func (s *Store) contentPath(id string) string { return filepath.Join(s.dir, id+".md") }
 func (s *Store) metaPath(id string) string    { return filepath.Join(s.dir, id+".json") }
+func (s *Store) attDir(id string) string      { return filepath.Join(s.dir, id+".att") }
 
 func (s *Store) Content(id string) ([]byte, error) {
 	if !ValidID(id) {
@@ -148,8 +227,17 @@ func (s *Store) Create(content string, expiresIn int64) (Share, error) {
 // CreateWith is Create with the encrypted flag. The server never decrypts: for
 // an encrypted share it only checks that content looks like base64 text.
 func (s *Store) CreateWith(content string, expiresIn int64, encrypted bool) (Share, error) {
+	return s.CreateFull(content, expiresIn, encrypted, nil)
+}
+
+// CreateFull is CreateWith with the attachment names the note references.
+func (s *Store) CreateFull(content string, expiresIn int64, encrypted bool, attachments []string) (Share, error) {
 	if encrypted && !ciphertextPattern.MatchString(content) {
 		return Share{}, ErrNotCiphertext
+	}
+	attachments, err := normalizeAttachments(attachments)
+	if err != nil {
+		return Share{}, err
 	}
 	password := randomHex(16)
 	for {
@@ -163,7 +251,7 @@ func (s *Store) CreateWith(content string, expiresIn int64, encrypted bool) (Sha
 			continue // collision, practically impossible
 		}
 		now := s.now().Unix()
-		m := Meta{ID: id, PasswordSHA256: hashPassword(password), Created: now, Updated: now, Encrypted: encrypted}
+		m := Meta{ID: id, PasswordSHA256: hashPassword(password), Created: now, Updated: now, Encrypted: encrypted, Attachments: attachments}
 		if expiresIn > 0 {
 			exp := now + expiresIn
 			m.Expires = &exp
@@ -176,7 +264,8 @@ func (s *Store) CreateWith(content string, expiresIn int64, encrypted bool) (Sha
 		if err != nil {
 			return Share{}, err
 		}
-		return Share{ID: id, Password: password, Created: now, Expires: m.Expires, Encrypted: encrypted}, nil
+		return Share{ID: id, Password: password, Created: now, Expires: m.Expires, Encrypted: encrypted,
+			Missing: s.missing(id, attachments)}, nil
 	}
 }
 
@@ -187,25 +276,49 @@ func (s *Store) Update(id, password, content string) error {
 // UpdateWith is Update with an optional encrypted flag; nil leaves it unchanged.
 // The content is checked against the resulting flag.
 func (s *Store) UpdateWith(id, password, content string, encrypted *bool) error {
+	_, err := s.UpdateFull(id, password, content, encrypted, nil)
+	return err
+}
+
+// UpdateFull is UpdateWith plus the full attachment list (nil leaves it
+// unchanged). Stored files no longer declared are deleted, and all of them
+// when the encrypted flag flips, since stored bytes are in the old form.
+func (s *Store) UpdateFull(id, password, content string, encrypted *bool, attachments []string) (UpdateResult, error) {
 	if !ValidID(id) {
-		return ErrInvalidID
+		return UpdateResult{}, ErrInvalidID
+	}
+	var names []string
+	if attachments != nil {
+		var err error
+		if names, err = normalizeAttachments(attachments); err != nil {
+			return UpdateResult{}, err
+		}
 	}
 	defer s.lock(id)()
 	m, err := s.authorize(id, password)
 	if err != nil {
-		return err
+		return UpdateResult{}, err
 	}
+	flipped := false
 	if encrypted != nil {
+		flipped = m.Encrypted != *encrypted
 		m.Encrypted = *encrypted
 	}
 	if m.Encrypted && !ciphertextPattern.MatchString(content) {
-		return ErrNotCiphertext
+		return UpdateResult{}, ErrNotCiphertext
+	}
+	if attachments != nil {
+		m.Attachments = names
 	}
 	if err := s.writeContent(id, content); err != nil {
-		return err
+		return UpdateResult{}, err
 	}
 	m.Updated = s.now().Unix()
-	return s.writeMeta(id, m)
+	if err := s.writeMeta(id, m); err != nil {
+		return UpdateResult{}, err
+	}
+	s.pruneAttachments(id, m.Attachments, flipped)
+	return UpdateResult{Encrypted: m.Encrypted, Missing: s.missing(id, m.Attachments)}, nil
 }
 
 func (s *Store) Delete(id, password string) error {
@@ -221,11 +334,11 @@ func (s *Store) Delete(id, password string) error {
 	if _, err := s.authorize(id, password); err != nil {
 		return err
 	}
-	// Content first: a crash in between leaves an orphan meta, not a readable share.
-	if err := os.Remove(s.contentPath(id)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	// Attachments, content, meta: a crash in between leaves an orphan meta, not a readable share.
+	if err := s.removeFiles(id); err != nil {
 		return err
 	}
-	return os.Remove(s.metaPath(id))
+	return nil
 }
 
 // authorize checks password and returns the meta upgraded to the current
@@ -257,10 +370,14 @@ func (s *Store) authorize(id, password string) (Meta, error) {
 	return m, nil
 }
 
-// removeFiles deletes both files of a share; the caller holds the id lock.
-// Content goes first and the meta stays if that fails, so an expired share
-// never ends up as content without a meta (which Content would serve).
+// removeFiles deletes everything of a share; the caller holds the id lock.
+// Attachments go first, then content, and the meta stays if one fails, so
+// readable content or attachments never outlive the meta (which Content
+// would serve as an unexpired share).
 func (s *Store) removeFiles(id string) error {
+	if err := os.RemoveAll(s.attDir(id)); err != nil {
+		return err
+	}
 	if err := os.Remove(s.contentPath(id)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
@@ -322,6 +439,136 @@ func (s *Store) CleanupLoop(ctx context.Context, interval time.Duration, logger 
 			run()
 		}
 	}
+}
+
+// missing returns the declared attachments that have no stored file (never nil).
+func (s *Store) missing(id string, declared []string) []string {
+	out := []string{}
+	for _, n := range declared {
+		if _, err := os.Stat(filepath.Join(s.attDir(id), n)); err != nil {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// pruneAttachments deletes stored files that are not declared (all when all is
+// set). Failures are not fatal: a leftover file is unreachable through GET.
+func (s *Store) pruneAttachments(id string, declared []string, all bool) {
+	entries, err := os.ReadDir(s.attDir(id))
+	if err != nil {
+		return
+	}
+	keep := map[string]bool{}
+	if !all {
+		for _, n := range declared {
+			keep[n] = true
+		}
+	}
+	for _, e := range entries {
+		if !keep[e.Name()] {
+			os.Remove(filepath.Join(s.attDir(id), e.Name()))
+		}
+	}
+}
+
+func contains(list []string, name string) bool {
+	for _, n := range list {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
+// CheckAttachment authorizes an upload and reports whether the file is
+// already stored. It fails with ErrNotDeclared if name is not in the share's list.
+func (s *Store) CheckAttachment(id, password, name string) (stored bool, err error) {
+	if !ValidID(id) {
+		return false, ErrInvalidID
+	}
+	defer s.lock(id)()
+	m, err := s.authorize(id, password)
+	if err != nil {
+		return false, err
+	}
+	if !ValidAttachmentName(name) || !contains(m.Attachments, name) {
+		return false, ErrNotDeclared
+	}
+	_, err = os.Stat(filepath.Join(s.attDir(id), name))
+	return err == nil, nil
+}
+
+// PutAttachment stores data as the declared attachment name after checking
+// the password, the size limits and that sha256(data) matches the name.
+// Storing a file that already exists succeeds without writing.
+func (s *Store) PutAttachment(id, password, name string, data []byte) error {
+	if !ValidID(id) {
+		return ErrInvalidID
+	}
+	defer s.lock(id)()
+	m, err := s.authorize(id, password)
+	if err != nil {
+		return err
+	}
+	if !ValidAttachmentName(name) || !contains(m.Attachments, name) {
+		return ErrNotDeclared
+	}
+	dir := s.attDir(id)
+	path := filepath.Join(dir, name)
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	if int64(len(data)) > s.maxAttachment {
+		return ErrTooLarge
+	}
+	sum := sha256.Sum256(data)
+	if hex.EncodeToString(sum[:]) != name[:64] {
+		return ErrHashMismatch
+	}
+	total := int64(len(data))
+	entries, err := os.ReadDir(dir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	for _, e := range entries {
+		if !ValidAttachmentName(e.Name()) {
+			continue // temp files
+		}
+		if info, err := e.Info(); err == nil {
+			total += info.Size()
+		}
+	}
+	if total > s.maxShareAttachments {
+		return ErrTooLarge
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return writeAtomic(path, data)
+}
+
+// Attachment opens a stored attachment of a live share. encrypted tells
+// whether the bytes are a ciphertext packet. The caller closes the file.
+func (s *Store) Attachment(id, name string) (f *os.File, encrypted bool, err error) {
+	if !ValidID(id) {
+		return nil, false, ErrInvalidID
+	}
+	if !ValidAttachmentName(name) {
+		return nil, false, ErrNotFound
+	}
+	m, err := s.Meta(id) // hides expired shares
+	if err != nil {
+		return nil, false, err
+	}
+	if !contains(m.Attachments, name) {
+		return nil, false, ErrNotFound
+	}
+	f, err = os.Open(filepath.Join(s.attDir(id), name))
+	if err != nil {
+		return nil, false, notFound(err)
+	}
+	return f, m.Encrypted, nil
 }
 
 func (s *Store) writeContent(id, content string) error {

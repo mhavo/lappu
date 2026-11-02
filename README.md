@@ -65,7 +65,9 @@ The server listens on `127.0.0.1:8080`. Put a reverse proxy with TLS (for exampl
 | `LAPPU_UPLOAD_TOKEN` | – | Upload token, at least 32 characters. Required unless anonymous uploads are allowed. |
 | `LAPPU_UPLOAD_TOKEN_FILE` | – | Read the token from a file instead (Docker secrets etc.). Set only one of `LAPPU_UPLOAD_TOKEN` and `LAPPU_UPLOAD_TOKEN_FILE`. |
 | `LAPPU_ALLOW_ANONYMOUS_UPLOADS` | `false` | `true` lets anyone write without a token, e.g. for the unmodified upstream plugin. Not recommended. |
-| `LAPPU_MAX_BODY_BYTES` | `20971520` (20 MiB) | Maximum request body size. Images are embedded as base64, so the limit is generous. |
+| `LAPPU_MAX_BODY_BYTES` | `20971520` (20 MiB) | Maximum request body size for the note itself. Images are uploaded separately as attachments (older plugins embed them as base64, hence the generous default). |
+| `LAPPU_MAX_ATTACHMENT_BYTES` | `10485760` (10 MiB) | Maximum size of one attachment file (uploaded separately from the note). |
+| `LAPPU_MAX_SHARE_ATTACHMENT_BYTES` | `52428800` (50 MiB) | Maximum total size of the attachments of one share. |
 | `LAPPU_TRUSTED_PROXIES` | `127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7` | Comma-separated CIDRs or IPs whose `X-Forwarded-For` header is trusted for the client IP (rate limiting and logs). |
 
 The server refuses to start if no token is set and `LAPPU_ALLOW_ANONYMOUS_UPLOADS` is not `true`, if the token is shorter than 32 characters, or if any old `JSP_*` variable (the pre-rename names) is still set.

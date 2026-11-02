@@ -20,7 +20,10 @@ type config struct {
 	Token          string
 	AllowAnonymous bool
 	MaxBodyBytes   int64
-	TrustedProxies []netip.Prefix
+	// Attachment limits per file and in total per share.
+	MaxAttachmentBytes      int64
+	MaxShareAttachmentBytes int64
+	TrustedProxies          []netip.Prefix
 }
 
 // envSuffixes are the configuration variables; each is read as LAPPU_<suffix>.
@@ -81,6 +84,13 @@ func loadConfig(getenv func(string) string) (config, error) {
 		return c, fmt.Errorf("LAPPU_MAX_BODY_BYTES must be a positive integer")
 	}
 
+	if c.MaxAttachmentBytes, err = positiveInt(get, "LAPPU_MAX_ATTACHMENT_BYTES", 10<<20); err != nil {
+		return c, err
+	}
+	if c.MaxShareAttachmentBytes, err = positiveInt(get, "LAPPU_MAX_SHARE_ATTACHMENT_BYTES", 50<<20); err != nil {
+		return c, err
+	}
+
 	for p := range strings.SplitSeq(get("LAPPU_TRUSTED_PROXIES", defaultTrustedProxies), ",") {
 		p = strings.TrimSpace(p)
 		prefix, err := netip.ParsePrefix(p)
@@ -109,4 +119,12 @@ func loadToken(value, file string) (string, error) {
 		return "", fmt.Errorf("LAPPU_UPLOAD_TOKEN_FILE: %w", err)
 	}
 	return strings.TrimSpace(string(b)), nil
+}
+
+func positiveInt(get func(key, def string) string, key string, def int64) (int64, error) {
+	n, err := strconv.ParseInt(get(key, strconv.FormatInt(def, 10)), 10, 64)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", key)
+	}
+	return n, nil
 }

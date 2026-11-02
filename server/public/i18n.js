@@ -22,7 +22,9 @@
             wrongPassword: "Wrong password",
             decrypting: "Decrypting...",
             invalidEncrypted: "The encrypted note is damaged or in an unknown format.",
-            cryptoUnavailable: "Decryption needs a secure connection (https) and a browser with WebAssembly support."
+            cryptoUnavailable: "Decryption needs a secure connection (https) and a browser with WebAssembly support.",
+            decryptingImages: "Decrypting images {done}/{total}...",
+            imageFailed: "The image could not be loaded."
         },
         fi: {
             loading: "Ladataan...",
@@ -41,7 +43,9 @@
             wrongPassword: "Väärä salasana",
             decrypting: "Puretaan salausta...",
             invalidEncrypted: "Salattu lappu on vioittunut tai tuntemattomassa muodossa.",
-            cryptoUnavailable: "Salauksen purku vaatii suojatun yhteyden (https) ja WebAssembly-tuen selaimelta."
+            cryptoUnavailable: "Salauksen purku vaatii suojatun yhteyden (https) ja WebAssembly-tuen selaimelta.",
+            decryptingImages: "Puretaan kuvien salausta {done}/{total}...",
+            imageFailed: "Kuvaa ei voitu ladata."
         }
     };
     const languages = Object.keys(translations);

@@ -185,19 +185,25 @@
         return subtle.importKey("raw", raw, "AES-GCM", false, ["decrypt"]);
     }
 
-    // Decrypts a SimpleTextCrypt message to a UTF-8 string.
-    async function decrypt(password, message, deps) {
-        const packet = decodeMessage(message);
+    // Decrypts a binary packet (IV || ciphertext || tag) to bytes. Every packet
+    // has its own IV and thus its own Argon2 run.
+    async function decryptBytes(password, packet, deps) {
+        if (!(packet instanceof Uint8Array) || packet.length < IV_LENGTH + TAG_LENGTH)
+            throw new CrypterError("invalid-format", "Packet is too short");
         const iv = packet.subarray(0, IV_LENGTH);
         const key = await deriveKey(password, iv, deps);
         const subtle = (deps && deps.subtle) || getSubtle();
-        let plain;
         try {
-            plain = new Uint8Array(await subtle.decrypt(
+            return new Uint8Array(await subtle.decrypt(
                 { name: "AES-GCM", iv, tagLength: 128 }, key, packet.subarray(IV_LENGTH)));
         } catch (e) {
             throw new CrypterError("decrypt-failed", "Wrong password or corrupted message");
         }
+    }
+
+    // Decrypts a SimpleTextCrypt message to a UTF-8 string.
+    async function decrypt(password, message, deps) {
+        const plain = await decryptBytes(password, decodeMessage(message), deps);
         try {
             return new TextDecoder("utf-8", { fatal: true }).decode(plain);
         } catch (e) {
@@ -205,10 +211,58 @@
         }
     }
 
+    // ---- Attachments (images stored next to the note, see the server's share.php?att=) ----
+
+    // <sha256 hex>.<ext>; the same rule as the server's. No SVG.
+    const ATTACHMENT_PATTERN = /^[a-f0-9]{64}\.(png|jpe?g|gif|webp|avif)$/;
+    const ATTACHMENT_SCHEME = "lappu-att:";
+    const ATTACHMENT_MIME = {
+        png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
+        gif: "image/gif", webp: "image/webp", avif: "image/avif"
+    };
+    // 1x1 transparent GIF shown until an encrypted attachment has been decrypted.
+    const ATTACHMENT_PLACEHOLDER = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+
+    function isAttachmentName(name) {
+        return typeof name === "string" && ATTACHMENT_PATTERN.test(name);
+    }
+
+    // The MIME type for a valid attachment name, otherwise null.
+    function attachmentMime(name) {
+        return isAttachmentName(name) ? ATTACHMENT_MIME[name.substring(name.lastIndexOf(".") + 1)] : null;
+    }
+
+    // The URL of an attachment; only built from a valid share id and name.
+    function attachmentUrl(id, name) {
+        if (typeof id !== "string" || !ID_PATTERN.test(id) || !isAttachmentName(name))
+            return null;
+        return `share.php?att=${id}/${name}`;
+    }
+
+    // Decides the src of a markdown image. ctx = { id, encrypted } of the shared
+    // note (absent: not a shared note). Returns null when src is not an
+    // attachment reference (leave it alone), otherwise { src, name }:
+    // - unencrypted share: src is the server URL, no name
+    // - encrypted share: src is a placeholder and name must be fetched and decrypted
+    // - invalid name or no share: src is "" (nothing is loaded)
+    // The URL is always built here from the validated id and name, never taken from the markdown.
+    function rewriteAttachmentSrc(src, ctx) {
+        if (typeof src !== "string" || !src.toLowerCase().startsWith(ATTACHMENT_SCHEME))
+            return null;
+        const name = src.substring(ATTACHMENT_SCHEME.length);
+        const url = ctx ? attachmentUrl(ctx.id, name) : null;
+        if (!url)
+            return { src: "", name: null };
+        if (ctx.encrypted)
+            return { src: ATTACHMENT_PLACEHOLDER, name };
+        return { src: url, name: null };
+    }
+
     const api = {
         ID_PATTERN, parseHash, getIdFromHash, classifyId, escapeHtml, formatParts,
         safeFileName, buildObsidianNewUrl, buildDownloadHref, formatExpires,
-        CrypterError, decodeMessage, deriveKey, decrypt, cryptoAvailable
+        CrypterError, decodeMessage, deriveKey, decrypt, decryptBytes, cryptoAvailable,
+        ATTACHMENT_PATTERN, ATTACHMENT_PLACEHOLDER, isAttachmentName, attachmentMime, attachmentUrl, rewriteAttachmentSrc
     };
     if (typeof module === "object" && module.exports)
         module.exports = api;

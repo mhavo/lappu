@@ -187,7 +187,7 @@ func TestPatchAndDelete(t *testing.T) {
 	expect(t, e.do(req{method: "PATCH", target: target, body: `{}`, header: auth("Password", s.Password)}), 400, "No content")
 	expect(t, e.do(req{method: "PATCH", target: target, body: `{"content":"v2"}`, header: auth("Password", "nope")}), 401, "Unauthorized")
 	expect(t, e.do(req{method: "PATCH", target: "/share.php?id=abcdef12", body: `{"content":"v2"}`, header: auth("Password", "x")}), 404, "Not found")
-	expect(t, e.do(req{method: "PATCH", target: target, body: `{"content":"v2"}`, header: auth("Password", s.Password)}), 200, "")
+	expect(t, e.do(req{method: "PATCH", target: target, body: `{"content":"v2"}`, header: auth("Password", s.Password)}), 200, `{"encrypted":false,"missing":[]}`)
 	expect(t, e.do(req{method: "GET", target: target}), 200, "v2")
 
 	expect(t, e.do(req{method: "DELETE", target: target, header: map[string]string{"Password": s.Password}}), 401, "Invalid token")
@@ -213,7 +213,7 @@ func TestLegacyPHPShare(t *testing.T) {
 
 	expect(t, e.do(req{method: "GET", target: target}), 200, "# legacy")
 	expect(t, e.do(req{method: "GET", target: "/share.php?meta&id=" + id}), 200, `{"id":"a1b2c3d4","created":1729500000,"expires":null,"encrypted":false}`)
-	expect(t, e.do(req{method: "PATCH", target: target, body: `{"content":"# updated"}`, header: auth("Password", pw)}), 200, "")
+	expect(t, e.do(req{method: "PATCH", target: target, body: `{"content":"# updated"}`, header: auth("Password", pw)}), 200, `{"encrypted":false,"missing":[]}`)
 	expect(t, e.do(req{method: "GET", target: target}), 200, "# updated")
 
 	var meta map[string]any
@@ -259,7 +259,7 @@ func TestHealthz(t *testing.T) {
 	expect(t, e.do(req{method: "GET", target: "/healthz"}), 200, "ok")
 }
 
-const wantCSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net/npm/ https://cdn.jsdelivr.net/gh/highlightjs/; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net/npm/ https://cdn.jsdelivr.net/gh/highlightjs/ https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net/npm/; img-src 'self' data: https:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+const wantCSP = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net/npm/ https://cdn.jsdelivr.net/gh/highlightjs/; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net/npm/ https://cdn.jsdelivr.net/gh/highlightjs/ https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net/npm/; img-src 'self' data: blob: https:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
 func TestStaticFiles(t *testing.T) {
 	e := newEnv(t)

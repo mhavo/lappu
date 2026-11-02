@@ -37,6 +37,8 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
+	st.SetAttachmentLimits(cfg.MaxAttachmentBytes, cfg.MaxShareAttachmentBytes)
+
 	srv := &http.Server{
 		Addr: cfg.Listen,
 		Handler: api.New(api.Config{

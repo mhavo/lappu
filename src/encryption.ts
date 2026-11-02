@@ -53,8 +53,13 @@ export function encodeLinkKey(password: string): string {
     return encodeURIComponent(password).replace(/-/g, "%2D").replace(/~/g, "%7E");
 }
 
-/** Share link: `<base>/#<id>~<key>` when the password is included, else `<base>/#<id>`. */
-export function buildShareLink(base: string, id: string, password?: string): string {
+/**
+ * Share link. Plain shares: `<base>/s/<id>`. Encrypted shares keep the id in the fragment:
+ * `<base>/#<id>~<key>` when the password is included, else `<base>/#<id>`.
+ */
+export function buildShareLink(base: string, id: string, encrypted: boolean, password?: string): string {
+    if (!encrypted)
+        return `${base}/s/${encodeURIComponent(id)}`;
     return `${base}/#${id}${password === undefined ? "" : `~${encodeLinkKey(password)}`}`;
 }
 

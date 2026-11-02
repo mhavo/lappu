@@ -65,3 +65,8 @@ export function shareEndpoint(url: string, id?: string): string {
     let endpoint = `${baseUrl(url)}/share.php`;
     return id === undefined ? endpoint : `${endpoint}?id=${encodeURIComponent(id)}`;
 }
+
+/** Public metadata url of a share, used to check whether it still exists. */
+export function metaEndpoint(url: string, id: string): string {
+    return `${baseUrl(url)}/share.php?meta&id=${encodeURIComponent(id)}`;
+}

@@ -52,3 +52,42 @@ export function parseExpires(value: unknown): number | null {
 export function isExpired(expires: number | null | undefined, nowMs: number = Date.now()): boolean {
     return typeof expires === "number" && expires * 1000 <= nowMs;
 }
+
+/** JSON body that only changes a share's expiry; "never" is sent as null. */
+export function buildExpiryBody(option: ExpiryOption): string {
+    return JSON.stringify({expiresIn: expiryToSeconds(option) ?? null});
+}
+
+/**
+ * New expiry (unix seconds, or null for never) from the reply to an expiry-only PATCH, or
+ * undefined when the reply has no valid `expires` key, i.e. the server did not apply it (older servers).
+ */
+export function parseExpiryReply(json: unknown): number | null | undefined {
+    if (typeof json !== "object" || json === null || !("expires" in json))
+        return undefined;
+    let raw = (json as { expires: unknown }).expires;
+    let expires = parseExpires(raw);
+    return raw !== null && expires === null ? undefined : expires;
+}
+
+/** Whether the expiry the server reports is the kind that was asked for (a time, or never). */
+export function expiryMatches(option: ExpiryOption, expires: number | null): boolean {
+    return (option === "never") === (expires === null);
+}
+
+/** Splits shares into those whose stored expiry has passed and the rest (to be checked on the server). */
+export function partitionExpired<T extends { expires?: number | null }>(items: readonly T[], nowMs: number = Date.now()): { expired: T[], remaining: T[] } {
+    let expired: T[] = [];
+    let remaining: T[] = [];
+    for (let item of items)
+        (isExpired(item.expires, nowMs) ? expired : remaining).push(item);
+    return {expired, remaining};
+}
+
+/**
+ * Whether a meta lookup shows the share is gone: a 404 with the server's JSON error body.
+ * Network errors, other statuses and non-JSON 404s (e.g. a wrong server URL) keep the item.
+ */
+export function isGoneReply(status: number, json: unknown): boolean {
+    return status === 404 && typeof json === "object" && json !== null && !Array.isArray(json) && "error" in json;
+}

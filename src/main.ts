@@ -3,9 +3,9 @@ import {defaultSettings, LappuSettings, SharedItem, sanitizeSharedItem} from "./
 import {LappuSettingsTab} from "./settings-tab";
 import {LappuView} from "./view";
 import {Language, resolveLanguage, translate, TranslationKey} from "./i18n";
-import {attachmentEndpoint, baseUrl, buildHeaders, classifyResponse, isConfigured, Operation, parseMissing, ResponseKind, shareEndpoint} from "./http";
-import {buildShareBody, buildUpdateBody, DEFAULT_EXPIRY, isExpiryOption, parseExpires} from "./expiry";
-import {ShareModal} from "./share-modal";
+import {attachmentEndpoint, baseUrl, buildHeaders, classifyResponse, isConfigured, metaEndpoint, Operation, parseMissing, ResponseKind, shareEndpoint} from "./http";
+import {buildExpiryBody, buildShareBody, buildUpdateBody, DEFAULT_EXPIRY, ExpiryOption, expiryMatches, isExpired, isExpiryOption, isGoneReply, parseExpires, parseExpiryReply, partitionExpired} from "./expiry";
+import {ExpiryModal, ShareModal} from "./share-modal";
 import {buildShareLink, confirmsEncryption, ShareOptions} from "./encryption";
 import {encrypt, encryptBytes} from "./crypter";
 import {defaultStore, rewriteAttachments, sha256Hex, Store} from "./attachments";
@@ -73,6 +73,11 @@ export default class LappuPlugin extends Plugin {
                         i.setTitle(this.t("action.update"));
                         i.setIcon("share");
                         i.onClick(() => this.updateFile(shared, f));
+                    });
+                    m.addItem(i => {
+                        i.setTitle(this.t("action.changeExpiry"));
+                        i.setIcon("clock");
+                        i.onClick(() => this.changeExpiry(shared));
                     });
                     m.addItem(i => {
                         i.setTitle(this.t("action.delete"));
@@ -145,6 +150,19 @@ export default class LappuPlugin extends Plugin {
                 if (shared) {
                     if (!checking)
                         this.updateFile(shared, ctx.file);
+                    return true;
+                }
+                return false;
+            }
+        });
+        this.addCommand({
+            id: "change-expiry",
+            name: this.t("command.changeExpiry"),
+            editorCheckCallback: (checking, _, ctx) => {
+                let shared = this.getSharedItem(ctx.file.path);
+                if (shared) {
+                    if (!checking)
+                        this.changeExpiry(shared);
                     return true;
                 }
                 return false;
@@ -323,8 +341,9 @@ export default class LappuPlugin extends Plugin {
         return this.t(ERROR_MESSAGES[kind]);
     }
 
-    private showError(operation: Operation, name: string, detail: string, localItem?: SharedItem, buttonKey?: TranslationKey): void {
-        let titleKey: TranslationKey = operation === "share" ? "error.share" : operation === "update" ? "error.update" : "error.delete";
+    private showError(operation: Operation | "expiry", name: string, detail: string, localItem?: SharedItem, buttonKey?: TranslationKey): void {
+        let titleKey: TranslationKey = operation === "share" ? "error.share" : operation === "update" ? "error.update"
+            : operation === "expiry" ? "error.changeExpiry" : "error.delete";
         let notice = new Notice(createFragment(f => {
             f.createSpan({text: `${this.t(titleKey, {name})} `});
             f.createEl("code", {text: detail});
@@ -470,6 +489,112 @@ export default class LappuPlugin extends Plugin {
         }
     }
 
+    /** Current expiry of a share as shown to the user. */
+    describeExpiry(item: SharedItem): string {
+        if (typeof item.expires !== "number")
+            return this.t("expiry.never");
+        let date = new Date(item.expires * 1000).toLocaleString(this.language());
+        return this.t(isExpired(item.expires) ? "view.expired" : "view.expires", {date});
+    }
+
+    /**
+     * Asks for a new expiry and sends an expiry-only PATCH (no content, so encrypted shares work
+     * too). Older servers reject it or do not echo `expires`; then nothing is stored and the user
+     * is told to update the server.
+     */
+    async changeExpiry(item: SharedItem, option?: ExpiryOption): Promise<boolean> {
+        if (!this.ensureConfigured())
+            return false;
+        option = option ?? await new Promise<ExpiryOption | undefined>(resolve =>
+            new ExpiryModal(this.app, this, this.describeExpiry(item), resolve).open());
+        if (!option)
+            return false;
+        let name = removeExtension(item.path);
+        try {
+            let response = await this.request("PATCH", shareEndpoint(this.settings.url, item.id),
+                buildHeaders(this.settings.token, item.password), buildExpiryBody(option));
+            // An older server requires content and answers 400 to a body without it.
+            if (response.status === 400) {
+                new Notice(this.t("notice.expiryChangeUnsupported", {name}), 10000);
+                return false;
+            }
+            let kind = classifyResponse(response.status, response.text, "update");
+            if (kind !== "ok") {
+                this.showError("expiry", name, this.describeFailure(kind, response.status),
+                    kind === "notFound" ? item : undefined, "button.removeLocal");
+                return false;
+            }
+            let expires = parseExpiryReply(response.json);
+            if (expires === undefined) {
+                new Notice(this.t("notice.expiryChangeUnsupported", {name}), 10000);
+                return false;
+            }
+            // Store what the server reports, even if it is not what was asked for.
+            item.expires = expires;
+            await this.saveSettings();
+            this.refreshAllViews();
+            if (!expiryMatches(option, expires))
+                new Notice(this.t("notice.expiryChangeUnsupported", {name}), 10000);
+            else if (expires === null)
+                new Notice(this.t("notice.expiryChangedNever", {name}));
+            else
+                new Notice(this.t("notice.expiryChanged", {name, date: new Date(expires * 1000).toLocaleString(this.language())}));
+            return true;
+        } catch (e) {
+            this.showError("expiry", name, String(e));
+            console.log(e);
+            return false;
+        }
+    }
+
+    private removingExpired = false;
+
+    /**
+     * Removes local entries of shares that are gone: those whose stored expiry has passed, and
+     * those the server's public meta lookup reports as not found. Network errors and any other
+     * reply keep the entry. Nothing is deleted on the server. Returns the number removed.
+     */
+    async removeExpired(): Promise<number> {
+        if (this.removingExpired)
+            return 0;
+        this.removingExpired = true;
+        try {
+            let {expired, remaining} = partitionExpired(this.settings.shared);
+            let gone = [...expired];
+            let unchecked = 0;
+            if (this.settings.url?.trim()) {
+                for (let item of remaining) {
+                    try {
+                        // with the token, so the server never rate-limits these lookups of possibly gone shares
+                        let response = await this.request("GET", metaEndpoint(this.settings.url, item.id),
+                            this.settings.token?.trim() ? buildHeaders(this.settings.token) : {});
+                        if (isGoneReply(response.status, response.json))
+                            gone.push(item);
+                        else if (response.status < 200 || response.status >= 300)
+                            unchecked++;
+                    } catch (e) {
+                        unchecked++;
+                        console.log(e);
+                    }
+                }
+            } else {
+                unchecked = remaining.length;
+            }
+            if (gone.length) {
+                for (let item of gone)
+                    this.settings.shared.remove(item);
+                await this.saveSettings();
+                this.refreshAllViews();
+            }
+            new Notice(this.t("notice.expiredRemoved", {count: gone.length}));
+            if (unchecked)
+                new Notice(this.t("notice.expiredUnchecked", {count: unchecked}), 10000);
+            return gone.length;
+        } finally {
+            this.removingExpired = false;
+        }
+    }
+
     async deleteLocalFileInfo(item: SharedItem): Promise<void> {
         this.settings.shared.remove(item);
         await this.saveSettings();
@@ -478,7 +603,7 @@ export default class LappuPlugin extends Plugin {
 
     async copyShareLink(item: SharedItem, notice = true): Promise<void> {
         let password = item.encrypted && item.passwordInLink ? item.encryptionPassword : undefined;
-        await navigator.clipboard.writeText(buildShareLink(baseUrl(this.settings.url), item.id, password));
+        await navigator.clipboard.writeText(buildShareLink(baseUrl(this.settings.url), item.id, !!item.encrypted, password));
         if (notice)
             new Notice(this.t("notice.linkCopied", {name: removeExtension(item.path)}));
     }

@@ -71,3 +71,12 @@ describe("shareEndpoint", () => {
         expect(shareEndpoint("https://x", "a&b")).toBe("https://x/share.php?id=a%26b");
     });
 });
+
+import {metaEndpoint} from "../src/http";
+
+describe("metaEndpoint", () => {
+    it("builds the public meta url", () => {
+        expect(metaEndpoint("https://x.test/", "abc")).toBe("https://x.test/share.php?meta&id=abc");
+        expect(metaEndpoint(" https://x.test ", "a b&c")).toBe("https://x.test/share.php?meta&id=a%20b%26c");
+    });
+});

@@ -44,12 +44,21 @@ describe("encodeLinkKey", () => {
 });
 
 describe("buildShareLink", () => {
-    it("is #id without a password", () => {
-        expect(buildShareLink("https://x.test", "abc123")).toBe("https://x.test/#abc123");
+    it("is /s/id for a plain share", () => {
+        expect(buildShareLink("https://x.test", "abc123", false)).toBe("https://x.test/s/abc123");
+        expect(buildShareLink("https://x.test/sub", "abc123", false)).toBe("https://x.test/sub/s/abc123");
     });
 
-    it("is #id~key with a password", () => {
-        expect(buildShareLink("https://x.test", "abc123", "p-w~1 ä")).toBe("https://x.test/#abc123~p%2Dw%7E1%20%C3%A4");
+    it("never puts a password into a plain share's link", () => {
+        expect(buildShareLink("https://x.test", "abc123", false, "secret")).toBe("https://x.test/s/abc123");
+    });
+
+    it("is #id for an encrypted share without the password in the link", () => {
+        expect(buildShareLink("https://x.test", "abc123", true)).toBe("https://x.test/#abc123");
+    });
+
+    it("is #id~key for an encrypted share with the password", () => {
+        expect(buildShareLink("https://x.test", "abc123", true, "p-w~1 ä")).toBe("https://x.test/#abc123~p%2Dw%7E1%20%C3%A4");
     });
 });
 

@@ -10,6 +10,7 @@ const en = {
     "command.update": "Update current file's Lappu",
     "command.delete": "Delete current file's Lappu",
     "command.import": "Import shares from Just Share Please",
+    "command.changeExpiry": "Change expiry of current file's Lappu",
 
     "action.share": "Share as Lappu",
     "action.copy": "Copy Lappu link",
@@ -17,6 +18,8 @@ const en = {
     "action.delete": "Delete Lappu",
     "action.open": "Open in Obsidian",
     "action.copyPassword": "Copy password",
+    "action.changeExpiry": "Change expiry",
+    "action.removeExpired": "Remove expired",
 
     "notice.shared": "Successfully shared {name} and copied link to clipboard",
     "notice.updated": "Successfully updated the Lappu for {name}",
@@ -31,6 +34,11 @@ const en = {
     "notice.passwordCopied": "Copied the password of {name} to clipboard",
     "notice.embedsSkipped": "{count} embeds were not shared: {list}",
     "notice.attachmentsUnsupported": "The server does not support attachments, so the images in {name} will not show. Update the server.",
+    "notice.expiryChanged": "The Lappu for {name} now expires {date}",
+    "notice.expiryChangedNever": "The Lappu for {name} now never expires",
+    "notice.expiryChangeUnsupported": "The server does not support changing the expiry, so {name} was not changed. Update the server.",
+    "notice.expiredRemoved": "Removed {count} expired shares from the list.",
+    "notice.expiredUnchecked": "{count} shares could not be checked on the server and were kept.",
 
     "button.openSettings": "Open settings",
     "button.forceDeleteLocal": "Force-delete local information",
@@ -39,6 +47,7 @@ const en = {
     "error.share": "There was an error sharing {name}:",
     "error.update": "There was an error updating {name}:",
     "error.delete": "There was an error deleting {name}:",
+    "error.changeExpiry": "There was an error changing the expiry of {name}:",
     "error.invalidToken": "Token missing or wrong – check the settings.",
     "error.wrongPassword": "The server rejected the share password.",
     "error.notFound": "The share no longer exists on the server. You can remove its local information.",
@@ -102,7 +111,11 @@ const en = {
     "share.passwordInLink": "Include password in link",
     "share.passwordInLink.desc": "Anyone with the link can read the note. Off: share the password separately.",
     "share.submit": "Share",
-    "share.cancel": "Cancel"
+    "share.cancel": "Cancel",
+
+    "expiryModal.title": "Change expiry",
+    "expiryModal.current": "Currently: {current}",
+    "expiryModal.submit": "Change"
 };
 
 export type TranslationKey = keyof typeof en;
@@ -114,6 +127,7 @@ const fi: Record<TranslationKey, string> = {
     "command.update": "Päivitä nykyisen tiedoston lappu",
     "command.delete": "Poista nykyisen tiedoston lappu",
     "command.import": "Tuo jaot Just Share Pleasesta",
+    "command.changeExpiry": "Muuta nykyisen tiedoston lapun voimassaoloa",
 
     "action.share": "Jaa lappuna",
     "action.copy": "Kopioi Lappu-linkki",
@@ -121,6 +135,8 @@ const fi: Record<TranslationKey, string> = {
     "action.delete": "Poista lappu",
     "action.open": "Avaa Obsidianissa",
     "action.copyPassword": "Kopioi salasana",
+    "action.changeExpiry": "Muuta voimassaoloa",
+    "action.removeExpired": "Poista vanhentuneet",
 
     "notice.shared": "{name} jaettiin ja linkki kopioitiin leikepöydälle",
     "notice.updated": "Muistiinpanon {name} lappu päivitettiin",
@@ -135,6 +151,11 @@ const fi: Record<TranslationKey, string> = {
     "notice.passwordCopied": "Muistiinpanon {name} salasana kopioitiin leikepöydälle",
     "notice.embedsSkipped": "{count} upotusta ei jaettu: {list}",
     "notice.attachmentsUnsupported": "Palvelin ei tue liitteitä, joten kuvat eivät näy muistiinpanossa {name}. Päivitä palvelin.",
+    "notice.expiryChanged": "Muistiinpanon {name} lappu vanhenee nyt {date}",
+    "notice.expiryChangedNever": "Muistiinpanon {name} lappu ei nyt vanhene koskaan",
+    "notice.expiryChangeUnsupported": "Palvelin ei tue voimassaolon muuttamista, joten muistiinpanoa {name} ei muutettu. Päivitä palvelin.",
+    "notice.expiredRemoved": "Listalta poistettiin {count} vanhentunutta jakoa.",
+    "notice.expiredUnchecked": "{count} jakoa ei voitu tarkistaa palvelimelta, joten ne säilytettiin.",
 
     "button.openSettings": "Avaa asetukset",
     "button.forceDeleteLocal": "Poista paikalliset tiedot väkisin",
@@ -143,6 +164,7 @@ const fi: Record<TranslationKey, string> = {
     "error.share": "Virhe jaettaessa muistiinpanoa {name}:",
     "error.update": "Virhe päivitettäessä muistiinpanoa {name}:",
     "error.delete": "Virhe poistettaessa muistiinpanoa {name}:",
+    "error.changeExpiry": "Virhe muutettaessa muistiinpanon {name} voimassaoloa:",
     "error.invalidToken": "Token puuttuu tai on väärä – tarkista asetukset.",
     "error.wrongPassword": "Palvelin hylkäsi jaon salasanan.",
     "error.notFound": "Jakoa ei enää ole palvelimella. Voit poistaa sen paikalliset tiedot.",
@@ -206,7 +228,11 @@ const fi: Record<TranslationKey, string> = {
     "share.passwordInLink": "Liitä salasana linkkiin",
     "share.passwordInLink.desc": "Kuka tahansa linkin saanut voi lukea muistiinpanon. Pois päältä: jaa salasana erikseen.",
     "share.submit": "Jaa",
-    "share.cancel": "Peruuta"
+    "share.cancel": "Peruuta",
+
+    "expiryModal.title": "Muuta voimassaoloa",
+    "expiryModal.current": "Nyt: {current}",
+    "expiryModal.submit": "Muuta"
 };
 
 export const translations: Record<Language, Record<TranslationKey, string>> = {en, fi};

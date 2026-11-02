@@ -17,6 +17,9 @@ export class LappuView extends ItemView {
         this.contentEl.empty();
         let content = this.contentEl.createDiv({cls: "lappu-view"});
         if (this.plugin.settings.shared.length > 0) {
+            new ButtonComponent(content.createDiv({cls: "lappu-view-actions"}))
+                .setButtonText(this.plugin.t("action.removeExpired"))
+                .onClick(async () => this.plugin.removeExpired());
             for (let shared of [...this.plugin.settings.shared].reverse()) {
                 let file = this.plugin.app.vault.getAbstractFileByPath(shared.path) as TFile;
                 let div = content.createDiv({cls: "lappu-shared-item"});
@@ -67,6 +70,11 @@ export class LappuView extends ItemView {
                         .setIcon("share")
                         .onClick(async () => this.plugin.updateFile(shared, file));
                 }
+                new ButtonComponent(div)
+                    .setClass("clickable-icon")
+                    .setTooltip(this.plugin.t("action.changeExpiry"))
+                    .setIcon("clock")
+                    .onClick(async () => this.plugin.changeExpiry(shared));
                 new ButtonComponent(div)
                     .setClass("clickable-icon")
                     .setTooltip(this.plugin.t("action.delete"))

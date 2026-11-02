@@ -1,4 +1,5 @@
 import {ButtonComponent, ItemView, TFile, WorkspaceLeaf} from "obsidian";
+import {isExpired} from "./expiry";
 import LappuPlugin, {removeExtension} from "./main";
 
 export class LappuView extends ItemView {
@@ -24,6 +25,15 @@ export class LappuView extends ItemView {
                     div.createSpan({cls: "lappu-shared-path", text: removeExtension(shared.path)});
                 if (!file)
                     div.createEl("em", {cls: "lappu-shared-path", text: this.plugin.t("view.fileMissing")});
+                if (typeof shared.expires === "number") {
+                    let expired = isExpired(shared.expires);
+                    let date = new Date(shared.expires * 1000).toLocaleString(this.plugin.language());
+                    div.toggleClass("lappu-expired", expired);
+                    div.createEl("em", {
+                        cls: "lappu-shared-path lappu-shared-expiry",
+                        text: this.plugin.t(expired ? "view.expired" : "view.expires", {date})
+                    });
+                }
                 new ButtonComponent(div)
                     .setClass("clickable-icon")
                     .setTooltip(this.plugin.t("action.copy"))

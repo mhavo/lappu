@@ -1,6 +1,7 @@
 import {App, PluginSettingTab, SettingGroup} from "obsidian";
 import LappuPlugin from "./main";
 import {LanguageSetting} from "./i18n";
+import {EXPIRY_OPTIONS, ExpiryOption, isExpiryOption} from "./expiry";
 
 export class LappuSettingsTab extends PluginSettingTab {
 
@@ -92,6 +93,20 @@ export class LappuSettingsTab extends PluginSettingTab {
                 toggle.onChange(async v => {
                     this.plugin.settings.autoUpdateShares = v;
                     await this.plugin.saveSettings();
+                });
+            }));
+        group.addSetting(s => s
+            .setName(t("settings.defaultExpiry.name"))
+            .setDesc(t("settings.defaultExpiry.desc"))
+            .addDropdown(d => {
+                for (let option of EXPIRY_OPTIONS)
+                    d.addOption(option, t(`expiry.${option}`));
+                d.setValue(this.plugin.settings.defaultExpiry);
+                d.onChange(async v => {
+                    if (isExpiryOption(v)) {
+                        this.plugin.settings.defaultExpiry = v as ExpiryOption;
+                        await this.plugin.saveSettings();
+                    }
                 });
             }));
         group.addSetting(s => s

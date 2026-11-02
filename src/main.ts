@@ -4,6 +4,8 @@ import {LappuSettingsTab} from "./settings-tab";
 import {LappuView} from "./view";
 import {Language, resolveLanguage, translate, TranslationKey} from "./i18n";
 import {baseUrl, buildHeaders, classifyResponse, isConfigured, Operation, ResponseKind, shareEndpoint} from "./http";
+import {buildShareBody, DEFAULT_EXPIRY, ExpiryOption, isExpiryOption, parseExpires} from "./expiry";
+import {ExpiryModal} from "./expiry-modal";
 import {IMPORT_SOURCES, ImportSource, mergeImported} from "./import";
 
 interface ServerResponse {
@@ -163,6 +165,8 @@ export default class LappuPlugin extends Plugin {
         let data = await this.loadData();
         this.settings = Object.assign({}, defaultSettings, data);
         this.settings.shared = [...(this.settings.shared ?? [])];
+        if (!isExpiryOption(this.settings.defaultExpiry))
+            this.settings.defaultExpiry = DEFAULT_EXPIRY;
         return !!data;
     }
 
@@ -317,19 +321,28 @@ export default class LappuPlugin extends Plugin {
         }), 10000);
     }
 
-    async shareFile(file: TFile): Promise<SharedItem> {
+    /** Asks which expiry a new share gets; resolves undefined if the user cancels. */
+    private chooseExpiry(): Promise<ExpiryOption | undefined> {
+        return new Promise(resolve => new ExpiryModal(this.app, this, resolve).open());
+    }
+
+    /** Shares a file. Without an explicit expiry the user is asked, preselecting the default. */
+    async shareFile(file: TFile, expiry?: ExpiryOption): Promise<SharedItem> {
         if (!this.ensureConfigured())
+            return undefined;
+        expiry = expiry ?? await this.chooseExpiry();
+        if (!expiry)
             return undefined;
         try {
             let response = await this.request("POST", shareEndpoint(this.settings.url), buildHeaders(this.settings.token),
-                JSON.stringify({content: await this.preProcessMarkdown(file)}));
+                buildShareBody(await this.preProcessMarkdown(file), expiry));
             let kind = classifyResponse(response.status, response.text, "share");
             let data = response.json as Partial<SharedItem>;
             if (kind !== "ok" || !data || typeof data.id !== "string" || typeof data.password !== "string") {
                 this.showError("share", file.basename, kind === "ok" ? this.t("error.other", {status: response.status}) : this.describeFailure(kind, response.status));
                 return undefined;
             }
-            let shared: SharedItem = {id: data.id, password: data.password, path: file.path};
+            let shared: SharedItem = {id: data.id, password: data.password, path: file.path, expires: parseExpires(data.expires)};
 
             this.settings.shared.push(shared);
             await this.saveSettings();

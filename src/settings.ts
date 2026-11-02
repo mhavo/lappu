@@ -1,4 +1,5 @@
 import type {LanguageSetting} from "./i18n";
+import type {ExpiryOption} from "./expiry";
 
 export const defaultSettings: LappuSettings = {
     url: "",
@@ -8,7 +9,8 @@ export const defaultSettings: LappuSettings = {
     stripFrontmatter: true,
     includeNoteName: true,
     unshareDeletedFiles: true,
-    autoUpdateShares: false
+    autoUpdateShares: false,
+    defaultExpiry: "never"
 };
 
 export interface LappuSettings {
@@ -21,6 +23,7 @@ export interface LappuSettings {
     includeNoteName: boolean;
     unshareDeletedFiles: boolean;
     autoUpdateShares: boolean;
+    defaultExpiry: ExpiryOption;
 
 }
 
@@ -29,5 +32,7 @@ export interface SharedItem {
     id: string;
     password: string;
     path: string;
+    /** Expiry as unix seconds, or null/absent when the share never expires. */
+    expires?: number | null;
 
 }

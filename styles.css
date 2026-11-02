@@ -23,3 +23,12 @@
 .lappu-shared-item {
     margin-bottom: 20px;
 }
+
+.lappu-expired .lappu-shared-name {
+    text-decoration: line-through;
+    opacity: 0.6;
+}
+
+.lappu-expired .lappu-shared-expiry {
+    color: var(--text-error);
+}

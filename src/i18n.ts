@@ -56,6 +56,8 @@ const en = {
     "settings.unshareDeleted.desc": "Whether shares of files should be removed automatically when they are deleted. Only supported when deleting from within Obsidian.",
     "settings.autoUpdate.name": "Automatically update shares",
     "settings.autoUpdate.desc": "Whether a file's share should automatically be updated when the file is changed from within Obsidian.",
+    "settings.defaultExpiry.name": "Default expiry",
+    "settings.defaultExpiry.desc": "How long a new share lasts by default. You can choose another time when sharing.",
     "settings.language.name": "Language",
     "settings.language.desc": "Language of this plugin. Command names change after Obsidian is restarted.",
     "settings.language.auto": "Automatic",
@@ -66,7 +68,16 @@ const en = {
 
     "view.title": "Lappu",
     "view.empty": "You have not shared any items yet.",
-    "view.fileMissing": "File does not exist anymore"
+    "view.fileMissing": "File does not exist anymore",
+    "view.expires": "Expires {date}",
+    "view.expired": "Expired {date}",
+
+    "expiry.prompt": "Choose when the share expires",
+    "expiry.default": "default",
+    "expiry.never": "Never",
+    "expiry.day": "1 day",
+    "expiry.week": "1 week",
+    "expiry.month": "30 days"
 };
 
 export type TranslationKey = keyof typeof en;
@@ -124,6 +135,8 @@ const fi: Record<TranslationKey, string> = {
     "settings.unshareDeleted.desc": "Poistetaanko tiedoston jako automaattisesti, kun tiedosto poistetaan. Toimii vain, kun tiedosto poistetaan Obsidianissa.",
     "settings.autoUpdate.name": "Päivitä jaot automaattisesti",
     "settings.autoUpdate.desc": "Päivitetäänkö tiedoston jako automaattisesti, kun tiedostoa muutetaan Obsidianissa.",
+    "settings.defaultExpiry.name": "Oletusvanhenemisaika",
+    "settings.defaultExpiry.desc": "Kuinka kauan uusi jako on voimassa oletuksena. Voit valita toisen ajan jakaessasi.",
     "settings.language.name": "Kieli",
     "settings.language.desc": "Tämän pluginin kieli. Komentojen nimet vaihtuvat, kun Obsidian käynnistetään uudelleen.",
     "settings.language.auto": "Automaattinen",
@@ -134,7 +147,16 @@ const fi: Record<TranslationKey, string> = {
 
     "view.title": "Lappu",
     "view.empty": "Et ole vielä jakanut mitään.",
-    "view.fileMissing": "Tiedostoa ei ole enää olemassa"
+    "view.fileMissing": "Tiedostoa ei ole enää olemassa",
+    "view.expires": "Vanhenee {date}",
+    "view.expired": "Vanhentunut {date}",
+
+    "expiry.prompt": "Valitse, milloin jako vanhenee",
+    "expiry.default": "oletus",
+    "expiry.never": "Ei koskaan",
+    "expiry.day": "1 päivä",
+    "expiry.week": "1 viikko",
+    "expiry.month": "30 päivää"
 };
 
 export const translations: Record<Language, Record<TranslationKey, string>> = {en, fi};

@@ -14,6 +14,14 @@ import (
 	"github.com/mhavo/lappu/server/internal/store"
 )
 
+const (
+	png = "\x89PNG\r\n\x1a\n"
+	// testCT is a SimpleTextCrypt text form (viewer-tests/vectors.json).
+	testCT = "AAECAwQFBgcICQoL\ntI+IL8VaAdnNEogID0axa9mnQVF7OBA2siggzwcsWw==\n"
+	// cipherBytes stands in for an encrypted attachment: at least IV + tag.
+	cipherBytes = "0123456789abcdef0123456789abcdef"
+)
+
 func attName(data, ext string) string {
 	sum := sha256.Sum256([]byte(data))
 	return hex.EncodeToString(sum[:]) + "." + ext
@@ -33,12 +41,15 @@ func (e *env) shareWith(encrypted bool, datas ...string) (store.Share, []string)
 	e.t.Helper()
 	var names []string
 	for _, d := range datas {
+		if !encrypted {
+			d = png + d
+		}
 		names = append(names, attName(d, "png"))
 	}
 	if names == nil {
 		names = []string{}
 	}
-	b, _ := json.Marshal(map[string]any{"content": "AAAA", "encrypted": encrypted, "attachments": names})
+	b, _ := json.Marshal(map[string]any{"content": testCT, "encrypted": encrypted, "attachments": names})
 	w := e.post(string(b))
 	if w.Code != 200 {
 		e.t.Fatalf("%d %s", w.Code, w.Body)
@@ -87,8 +98,8 @@ func TestInvalidAttachmentLists(t *testing.T) {
 func TestPatchResponseAndPruning(t *testing.T) {
 	e := newEnv(t)
 	s, names := e.shareWith(false, "one", "two")
-	expect(t, e.put(s.ID, names[0], s.Password, "one"), 200, "")
-	expect(t, e.put(s.ID, names[1], s.Password, "two"), 200, "")
+	expect(t, e.put(s.ID, names[0], s.Password, png+"one"), 200, "")
+	expect(t, e.put(s.ID, names[1], s.Password, png+"two"), 200, "")
 
 	// absent attachments: unchanged
 	w := e.patch(s.ID, s.Password, `{"content":"y"}`)
@@ -101,7 +112,7 @@ func TestPatchResponseAndPruning(t *testing.T) {
 	w = e.patch(s.ID, s.Password, `{"content":"y","attachments":["`+names[1]+`","`+newName+`"]}`)
 	expect(t, w, 200, `{"encrypted":false,"missing":["`+newName+`"]}`)
 	expect(t, e.do(req{method: "GET", target: "/share.php?att=" + s.ID + "/" + names[0]}), 404, "Not found")
-	expect(t, e.do(req{method: "GET", target: "/share.php?att=" + s.ID + "/" + names[1]}), 200, "two")
+	expect(t, e.do(req{method: "GET", target: "/share.php?att=" + s.ID + "/" + names[1]}), 200, png+"two")
 	if _, err := os.Stat(filepath.Join(e.dataDir, s.ID+".att", names[0])); !os.IsNotExist(err) {
 		t.Error("file not pruned")
 	}
@@ -110,7 +121,7 @@ func TestPatchResponseAndPruning(t *testing.T) {
 func TestPatchEchoesEncrypted(t *testing.T) {
 	e := newEnv(t)
 	s, _ := e.shareWith(true)
-	expect(t, e.patch(s.ID, s.Password, `{"content":"AAAA"}`), 200, `{"encrypted":true,"missing":[]}`)
+	expect(t, e.patch(s.ID, s.Password, `{"content":`+jsonString(testCT)+`}`), 200, `{"encrypted":true,"missing":[]}`)
 	expect(t, e.patch(s.ID, s.Password, `{"content":"plain","encrypted":false}`), 200, `{"encrypted":false,"missing":[]}`)
 }
 
@@ -123,45 +134,87 @@ func TestPutAttachmentRules(t *testing.T) {
 	expect(t, e.do(req{method: "PUT", target: "/share.php?att=" + s.ID + "/" + n, body: "hello",
 		header: map[string]string{"Password": s.Password}}), 401, "Invalid token")
 	expect(t, e.put(s.ID, n, "", "hello"), 400, "No id or password")
-	expect(t, e.put(s.ID, n, "nope", "hello"), 401, "Unauthorized")
+	expect(t, e.put(s.ID, n, "nope", png+"hello"), 401, "Unauthorized")
 	expect(t, e.put("abcdef12", n, "x", "hello"), 404, "Not found")
 	// malformed target
 	expect(t, e.do(req{method: "PUT", target: "/share.php?att=" + s.ID, body: "x", header: auth("Password", s.Password)}), 400, "No id or password")
 	expect(t, e.put(s.ID, "../x.png", s.Password, "x"), 400, "No id or password")
 	// undeclared
 	other := attName("other", "png")
-	expect(t, e.put(s.ID, other, s.Password, "other"), 400, "Attachment not declared")
+	expect(t, e.put(s.ID, other, s.Password, png+"other"), 400, "Attachment not declared")
 	// hash mismatch
-	expect(t, e.put(s.ID, n, s.Password, "HELLO"), 400, "Hash mismatch")
+	expect(t, e.put(s.ID, n, s.Password, png+"HELLO"), 400, "Hash mismatch")
 	if _, err := os.Stat(filepath.Join(e.dataDir, s.ID+".att", n)); err == nil {
 		t.Error("mismatching file stored")
 	}
 	// success, idempotent
-	expect(t, e.put(s.ID, n, s.Password, "hello"), 200, "")
-	expect(t, e.put(s.ID, n, s.Password, "hello"), 200, "")
+	expect(t, e.put(s.ID, n, s.Password, png+"hello"), 200, "")
+	expect(t, e.put(s.ID, n, s.Password, png+"hello"), 200, "")
 	// PUT without att is not a thing
 	expect(t, e.do(req{method: "PUT", target: "/share.php?id=" + s.ID, body: "x", header: auth()}), 405, "Unsupported method")
 }
 
 func TestPutAttachmentLimits(t *testing.T) {
 	e := newEnv(t)
-	e.store.SetAttachmentLimits(5, 8)
-	s, names := e.shareWith(false, "123456", "12345", "1234")
-	expect(t, e.put(s.ID, names[0], s.Password, "123456"), 413, "Attachment too large")
-	expect(t, e.put(s.ID, names[1], s.Password, "12345"), 200, "")
-	expect(t, e.put(s.ID, names[2], s.Password, "1234"), 413, "Attachment too large")
+	e.store.SetAttachmentLimits(12, 20)
+	s, names := e.shareWith(false, "12345", "1234", "123", "")
+	expect(t, e.put(s.ID, names[0], s.Password, png+"12345"), 413, "Attachment too large")
+	expect(t, e.put(s.ID, names[1], s.Password, png+"1234"), 200, "")
+	expect(t, e.put(s.ID, names[2], s.Password, png+"123"), 413, "Attachment too large")
+	expect(t, e.put(s.ID, names[3], s.Password, png), 200, "")
+	assertNoTemp(t, e)
+}
+
+func assertNoTemp(t *testing.T, e *env) {
+	t.Helper()
+	entries, _ := os.ReadDir(e.dataDir)
+	for _, en := range entries {
+		if strings.HasPrefix(en.Name(), ".") {
+			t.Errorf("temp file left: %s", en.Name())
+		}
+	}
+}
+
+func TestPutAttachmentContentChecks(t *testing.T) {
+	e := newEnv(t)
+	// unencrypted: bytes must match the extension
+	s, names := e.shareWith(false, "x")
+	text := "Meeting notes"
+	bad := attName(text, "png")
+	good := attName("GIF89a", "gif")
+	b, _ := json.Marshal(map[string]any{"content": "x", "attachments": []string{bad, good, names[0]}})
+	var s2 store.Share
+	json.Unmarshal(e.post(string(b)).Body.Bytes(), &s2)
+	expect(t, e.put(s2.ID, bad, s2.Password, text), 400, "Invalid attachment")
+	expect(t, e.put(s2.ID, good, s2.Password, "GIF89a"), 200, "")
+	_ = s
+	// encrypted: at least IV + tag
+	es, enames := e.shareWith(true, cipherBytes[:27], cipherBytes[:28])
+	expect(t, e.put(es.ID, enames[0], es.Password, cipherBytes[:27]), 400, "Invalid attachment")
+	expect(t, e.put(es.ID, enames[1], es.Password, cipherBytes[:28]), 200, "")
+	expect(t, e.do(req{method: "GET", target: "/share.php?att=" + es.ID + "/" + enames[0]}), 404, "Not found")
+	assertNoTemp(t, e)
+}
+
+func TestPutAttachmentBodyOverLimit(t *testing.T) {
+	e := newEnv(t)
+	e.store.SetAttachmentLimits(12, 100)
+	s, names := e.shareWith(false, "x")
+	// the declared hash does not matter: the limit applies while streaming
+	expect(t, e.put(s.ID, names[0], s.Password, png+strings.Repeat("z", 1000)), 413, "Attachment too large")
+	assertNoTemp(t, e)
 }
 
 func TestPutAttachmentExpired(t *testing.T) {
 	e := newEnv(t)
 	now := int64(1_800_000_000)
 	e.store.SetClock(func() time.Time { return time.Unix(now, 0) })
-	name := attName("x", "png")
+	name := attName(png+"x", "png")
 	var s store.Share
 	json.Unmarshal(e.post(`{"content":"c","expiresIn":60,"attachments":["`+name+`"]}`).Body.Bytes(), &s)
-	expect(t, e.put(s.ID, name, s.Password, "x"), 200, "")
+	expect(t, e.put(s.ID, name, s.Password, png+"x"), 200, "")
 	now += 60
-	expect(t, e.put(s.ID, name, s.Password, "x"), 404, "Not found")
+	expect(t, e.put(s.ID, name, s.Password, png+"x"), 404, "Not found")
 	expect(t, e.do(req{method: "GET", target: "/share.php?att=" + s.ID + "/" + name}), 404, "Not found")
 }
 
@@ -180,7 +233,8 @@ func TestPutAttachmentFailedAuthIsRateLimited(t *testing.T) {
 
 func TestGetAttachment(t *testing.T) {
 	e := newEnv(t)
-	datas := map[string]string{"png": "p", "jpg": "j", "jpeg": "jj", "gif": "g", "webp": "w", "avif": "a"}
+	datas := map[string]string{"png": png + "p", "jpg": "\xFF\xD8\xFFj", "jpeg": "\xFF\xD8\xFFjj", "gif": "GIF89ag",
+		"webp": "RIFF\x00\x00\x00\x00WEBPw", "avif": "\x00\x00\x00\x18ftypavif\x00\x00\x00\x00avif\x00\x00\x00\x00"}
 	mimes := map[string]string{"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
 		"gif": "image/gif", "webp": "image/webp", "avif": "image/avif"}
 	var names []string
@@ -205,24 +259,61 @@ func TestGetAttachment(t *testing.T) {
 		if csp := w.Header().Get("Content-Security-Policy"); csp != "default-src 'none'; sandbox" {
 			t.Errorf("csp %q", csp)
 		}
-		if !strings.HasPrefix(w.Header().Get("Cache-Control"), "private, max-age=") {
+		if w.Header().Get("Cache-Control") != "no-cache" {
 			t.Errorf("cache-control %q", w.Header().Get("Cache-Control"))
+		}
+		if w.Header().Get("Cross-Origin-Resource-Policy") != "same-origin" {
+			t.Errorf("corp %q", w.Header().Get("Cross-Origin-Resource-Policy"))
+		}
+		if w.Header().Get("Content-Disposition") != "" {
+			t.Errorf("disposition %q", w.Header().Get("Content-Disposition"))
+		}
+		// revalidation with the ETag
+		etag := w.Header().Get("ETag")
+		cond := e.do(req{method: "GET", target: "/share.php?att=" + s.ID + "/" + n, header: map[string]string{"If-None-Match": etag}})
+		if etag == "" || cond.Code != 304 {
+			t.Errorf("conditional get: %q %d", etag, cond.Code)
+		}
+		if head := e.do(req{method: "HEAD", target: "/share.php?att=" + s.ID + "/" + n}); head.Code != 200 ||
+			head.Header().Get("Cross-Origin-Resource-Policy") != "same-origin" {
+			t.Errorf("head: %d %v", head.Code, head.Header())
 		}
 	}
 	for _, target := range []string{
 		"/share.php?att=" + s.ID, "/share.php?att=" + s.ID + "/x.png", "/share.php?att=abcdef12/" + names[0],
 		"/share.php?att=" + s.ID + "/../" + s.ID + ".json", "/share.php?att=" + s.ID + "/" + strings.Repeat("a", 64) + ".svg",
 	} {
-		expect(t, e.do(req{method: "GET", target: target}), 404, "Not found")
+		w := e.do(req{method: "GET", target: target})
+		expect(t, w, 404, "Not found")
+		if w.Header().Get("Cross-Origin-Resource-Policy") != "same-origin" || w.Header().Get("X-Content-Type-Options") != "nosniff" {
+			t.Errorf("%s: error headers %v", target, w.Header())
+		}
 	}
+}
+
+func TestAttachmentRevalidationSeesDeletion(t *testing.T) {
+	e := newEnv(t)
+	s, names := e.shareWith(false, "x")
+	expect(t, e.put(s.ID, names[0], s.Password, png+"x"), 200, "")
+	target := "/share.php?att=" + s.ID + "/" + names[0]
+	etag := e.do(req{method: "GET", target: target}).Header().Get("ETag")
+	expect(t, e.do(req{method: "DELETE", target: "/share.php?id=" + s.ID, header: auth("Password", s.Password)}), 200, "")
+	w := e.do(req{method: "GET", target: target, header: map[string]string{"If-None-Match": etag}})
+	expect(t, w, 404, "Not found")
 }
 
 func TestGetAttachmentOfEncryptedShareIsOctetStream(t *testing.T) {
 	e := newEnv(t)
-	s, names := e.shareWith(true, "cipher bytes")
-	expect(t, e.put(s.ID, names[0], s.Password, "cipher bytes"), 200, "")
+	s, names := e.shareWith(true, cipherBytes)
+	expect(t, e.put(s.ID, names[0], s.Password, cipherBytes), 200, "")
 	w := e.do(req{method: "GET", target: "/share.php?att=" + s.ID + "/" + names[0]})
-	expect(t, w, 200, "cipher bytes")
+	expect(t, w, 200, cipherBytes)
+	if got := w.Header().Get("Content-Disposition"); got != `attachment; filename="attachment.bin"` {
+		t.Errorf("disposition %q", got)
+	}
+	if w.Header().Get("Cross-Origin-Resource-Policy") != "same-origin" || w.Header().Get("Cache-Control") != "no-cache" {
+		t.Errorf("headers %v", w.Header())
+	}
 	if ct := w.Header().Get("Content-Type"); ct != "application/octet-stream" {
 		t.Errorf("content-type %q", ct)
 	}
@@ -234,7 +325,7 @@ func TestGetAttachmentOfEncryptedShareIsOctetStream(t *testing.T) {
 func TestDeleteRemovesAttachmentDir(t *testing.T) {
 	e := newEnv(t)
 	s, names := e.shareWith(false, "x")
-	e.put(s.ID, names[0], s.Password, "x")
+	e.put(s.ID, names[0], s.Password, png+"x")
 	expect(t, e.do(req{method: "DELETE", target: "/share.php?id=" + s.ID, header: auth("Password", s.Password)}), 200, "")
 	if entries, _ := os.ReadDir(e.dataDir); len(entries) != 0 {
 		t.Errorf("left behind: %v", entries)

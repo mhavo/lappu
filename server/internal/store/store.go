@@ -2,15 +2,20 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"hash/fnv"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -25,15 +30,18 @@ var (
 	ErrNotFound     = errors.New("not found")
 	ErrUnauthorized = errors.New("unauthorized")
 	ErrInvalidID    = errors.New("invalid id")
-	// ErrNotCiphertext is returned when an encrypted share's content is empty or
-	// is not base64 text, which would mean a client leaks plaintext.
-	ErrNotCiphertext = errors.New("encrypted content must be non-empty base64 text")
+	// ErrNotCiphertext is returned when an encrypted share's content is not in
+	// the SimpleTextCrypt text form, which would mean a client leaks plaintext.
+	ErrNotCiphertext = errors.New("encrypted content must be SimpleTextCrypt base64 text")
 	// ErrInvalidAttachments is returned for a bad attachment name or too many names.
 	ErrInvalidAttachments = errors.New("invalid attachments")
 	// ErrNotDeclared is returned when an uploaded attachment is not in the share's list.
 	ErrNotDeclared = errors.New("attachment not declared")
 	// ErrHashMismatch is returned when the uploaded bytes do not hash to the name.
 	ErrHashMismatch = errors.New("attachment hash mismatch")
+	// ErrInvalidAttachmentData is returned when an uploaded attachment is too short
+	// to be a ciphertext packet or does not match its extension's image format.
+	ErrInvalidAttachmentData = errors.New("invalid attachment data")
 	// ErrTooLarge is returned when an attachment exceeds the per-file or per-share limit.
 	ErrTooLarge = errors.New("attachment too large")
 )
@@ -87,7 +95,61 @@ func normalizeAttachments(names []string) ([]string, error) {
 	return out, nil
 }
 
-var ciphertextPattern = regexp.MustCompile(`^[A-Za-z0-9+/=\s]+$`)
+// Sizes of the SimpleTextCrypt packet parts: AES-GCM IV and tag.
+const (
+	ivBytes  = 12
+	tagBytes = 16
+	// minEncryptedAttachment is the smallest valid encrypted attachment (IV + tag, empty plaintext).
+	minEncryptedAttachment = ivBytes + tagBytes
+)
+
+// validCiphertext checks the SimpleTextCrypt text form structurally: without
+// whitespace, a 16 character base64 IV (12 bytes) followed by base64 of at
+// least a tag (16 bytes). It cannot tell ciphertext from random base64, but
+// it rejects ordinary text a client might send by mistake.
+func validCiphertext(s string) bool {
+	s = strings.Join(strings.Fields(s), "")
+	if len(s) <= 16 {
+		return false
+	}
+	iv, err := base64.StdEncoding.DecodeString(s[:16])
+	if err != nil || len(iv) != ivBytes {
+		return false
+	}
+	body, err := base64.StdEncoding.DecodeString(s[16:])
+	return err == nil && len(body) >= tagBytes
+}
+
+// validImage reports whether head (the first bytes of a file) matches the
+// magic bytes of the image format of ext.
+func validImage(ext string, head []byte) bool {
+	switch ext {
+	case "png":
+		return bytes.HasPrefix(head, []byte("\x89PNG\r\n\x1a\n"))
+	case "jpg", "jpeg":
+		return bytes.HasPrefix(head, []byte("\xFF\xD8\xFF"))
+	case "gif":
+		return bytes.HasPrefix(head, []byte("GIF87a")) || bytes.HasPrefix(head, []byte("GIF89a"))
+	case "webp":
+		return len(head) >= 12 && string(head[:4]) == "RIFF" && string(head[8:12]) == "WEBP"
+	case "avif":
+		// ISO BMFF: size, "ftyp", major brand, minor version, compatible brands.
+		if len(head) < 16 || string(head[4:8]) != "ftyp" {
+			return false
+		}
+		size := int(min(binary.BigEndian.Uint32(head[:4]), uint32(len(head))))
+		isAvif := func(b []byte) bool { return string(b) == "avif" || string(b) == "avis" }
+		if isAvif(head[8:12]) {
+			return true
+		}
+		for i := 16; i+4 <= size; i += 4 {
+			if isAvif(head[i : i+4]) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9]{8,64}$`)
 
@@ -225,14 +287,14 @@ func (s *Store) Create(content string, expiresIn int64) (Share, error) {
 }
 
 // CreateWith is Create with the encrypted flag. The server never decrypts: for
-// an encrypted share it only checks that content looks like base64 text.
+// an encrypted share it only checks that content has the ciphertext text form.
 func (s *Store) CreateWith(content string, expiresIn int64, encrypted bool) (Share, error) {
 	return s.CreateFull(content, expiresIn, encrypted, nil)
 }
 
 // CreateFull is CreateWith with the attachment names the note references.
 func (s *Store) CreateFull(content string, expiresIn int64, encrypted bool, attachments []string) (Share, error) {
-	if encrypted && !ciphertextPattern.MatchString(content) {
+	if encrypted && !validCiphertext(content) {
 		return Share{}, ErrNotCiphertext
 	}
 	attachments, err := normalizeAttachments(attachments)
@@ -304,7 +366,7 @@ func (s *Store) UpdateFull(id, password, content string, encrypted *bool, attach
 		flipped = m.Encrypted != *encrypted
 		m.Encrypted = *encrypted
 	}
-	if m.Encrypted && !ciphertextPattern.MatchString(content) {
+	if m.Encrypted && !validCiphertext(content) {
 		return UpdateResult{}, ErrNotCiphertext
 	}
 	if attachments != nil {
@@ -397,6 +459,12 @@ func (s *Store) DeleteExpired() (int, error) {
 	n := 0
 	var firstErr error
 	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), tempPrefix) || strings.HasPrefix(e.Name(), ".tmp-") {
+			if info, err := e.Info(); err == nil && s.now().Sub(info.ModTime()) > staleTempAge {
+				os.Remove(filepath.Join(s.dir, e.Name())) // leftover of a crash
+			}
+			continue
+		}
 		id, ok := strings.CutSuffix(e.Name(), ".json")
 		if !ok || !ValidID(id) {
 			continue
@@ -484,28 +552,66 @@ func contains(list []string, name string) bool {
 // CheckAttachment authorizes an upload and reports whether the file is
 // already stored. It fails with ErrNotDeclared if name is not in the share's list.
 func (s *Store) CheckAttachment(id, password, name string) (stored bool, err error) {
-	if !ValidID(id) {
-		return false, ErrInvalidID
-	}
-	defer s.lock(id)()
-	m, err := s.authorize(id, password)
-	if err != nil {
-		return false, err
-	}
-	if !ValidAttachmentName(name) || !contains(m.Attachments, name) {
-		return false, ErrNotDeclared
-	}
-	_, err = os.Stat(filepath.Join(s.attDir(id), name))
-	return err == nil, nil
+	_, stored, err = s.checkAttachment(id, password, name)
+	return stored, err
 }
 
-// PutAttachment stores data as the declared attachment name after checking
-// the password, the size limits and that sha256(data) matches the name.
-// Storing a file that already exists succeeds without writing.
+func (s *Store) checkAttachment(id, password, name string) (m Meta, stored bool, err error) {
+	if !ValidID(id) {
+		return Meta{}, false, ErrInvalidID
+	}
+	defer s.lock(id)()
+	m, err = s.authorize(id, password)
+	if err != nil {
+		return Meta{}, false, err
+	}
+	if !ValidAttachmentName(name) || !contains(m.Attachments, name) {
+		return Meta{}, false, ErrNotDeclared
+	}
+	_, err = os.Stat(filepath.Join(s.attDir(id), name))
+	return m, err == nil, nil
+}
+
+// PutAttachment stores data as the declared attachment name; see PutAttachmentFrom.
 func (s *Store) PutAttachment(id, password, name string, data []byte) error {
+	return s.PutAttachmentFrom(id, password, name, bytes.NewReader(data))
+}
+
+// tempPrefix names in-flight uploads in the data directory. The dot prefix
+// never matches an ID or an attachment name, so they are never served or counted.
+const tempPrefix = ".upload-"
+
+// staleTempAge is how old a leftover temp file must be before cleanup removes it.
+const staleTempAge = time.Hour
+
+// PutAttachmentFrom stores r as the declared attachment name after checking
+// the password, the size limits, that sha256 of the bytes matches the name and
+// that the bytes fit the kind (an image of the extension's format, or at least
+// a ciphertext packet for an encrypted share). The body is spooled to a temp
+// file without holding the id lock; everything is checked again under it
+// before the rename. Storing a file that already exists succeeds without writing.
+// Errors from r are returned as they are.
+func (s *Store) PutAttachmentFrom(id, password, name string, r io.Reader) error {
 	if !ValidID(id) {
 		return ErrInvalidID
 	}
+	if _, stored, err := s.checkAttachment(id, password, name); err != nil || stored {
+		return err
+	}
+	tmp, err := os.CreateTemp(s.dir, tempPrefix+"*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name()) // a no-op after the rename
+	h := sha256.New()
+	n, err := s.spool(tmp, h, r)
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+
 	defer s.lock(id)()
 	m, err := s.authorize(id, password)
 	if err != nil {
@@ -519,21 +625,33 @@ func (s *Store) PutAttachment(id, password, name string, data []byte) error {
 	if _, err := os.Stat(path); err == nil {
 		return nil
 	}
-	if int64(len(data)) > s.maxAttachment {
-		return ErrTooLarge
-	}
-	sum := sha256.Sum256(data)
-	if hex.EncodeToString(sum[:]) != name[:64] {
+	if hex.EncodeToString(h.Sum(nil)) != name[:64] {
 		return ErrHashMismatch
 	}
-	total := int64(len(data))
+	if m.Encrypted {
+		if n < minEncryptedAttachment {
+			return ErrInvalidAttachmentData
+		}
+	} else {
+		f, err := os.Open(tmp.Name())
+		if err != nil {
+			return err
+		}
+		head := make([]byte, 512)
+		hn, _ := io.ReadFull(f, head)
+		f.Close()
+		if !validImage(name[strings.LastIndexByte(name, '.')+1:], head[:hn]) {
+			return ErrInvalidAttachmentData
+		}
+	}
+	total := n
 	entries, err := os.ReadDir(dir)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	for _, e := range entries {
 		if !ValidAttachmentName(e.Name()) {
-			continue // temp files
+			continue
 		}
 		if info, err := e.Info(); err == nil {
 			total += info.Size()
@@ -545,7 +663,26 @@ func (s *Store) PutAttachment(id, password, name string, data []byte) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	return writeAtomic(path, data)
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return err
+	}
+	if d, derr := os.Open(dir); derr == nil {
+		d.Sync()
+		d.Close()
+	}
+	return nil
+}
+
+// spool copies r to f and into h, failing with ErrTooLarge past the per-file limit.
+func (s *Store) spool(f *os.File, h hash.Hash, r io.Reader) (int64, error) {
+	n, err := io.Copy(f, io.LimitReader(io.TeeReader(r, h), s.maxAttachment+1))
+	if err != nil {
+		return n, err
+	}
+	if n > s.maxAttachment {
+		return n, ErrTooLarge
+	}
+	return n, f.Sync()
 }
 
 // Attachment opens a stored attachment of a live share. encrypted tells

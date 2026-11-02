@@ -488,8 +488,8 @@ func TestEncryptedShare(t *testing.T) {
 	expect(t, e.do(req{method: "GET", target: "/share.php?id=" + id}), 200, ct)
 
 	// absent keeps the flag, content is still checked
-	expect(t, e.patch(id, pw, `{"content":"plaintext!"}`), 400, `{"error":"encrypted content must be non-empty base64 text"}`)
-	if w := e.patch(id, pw, `{"content":"QUJD"}`); w.Code != 200 || e.metaOf(id)["encrypted"] != true {
+	expect(t, e.patch(id, pw, `{"content":"plaintext!"}`), 400, `{"error":"encrypted content must be SimpleTextCrypt base64 text"}`)
+	if w := e.patch(id, pw, `{"content":`+jsonString(testCT)+`}`); w.Code != 200 || e.metaOf(id)["encrypted"] != true {
 		t.Errorf("patch keep: %d %v", w.Code, e.metaOf(id))
 	}
 	// explicit false turns it off
@@ -512,6 +512,8 @@ func TestEncryptedRejections(t *testing.T) {
 		`{"content":"","encrypted":true}`,
 		`{"content":"# hi there","encrypted":true}`,
 		`{"content":"abc-def","encrypted":true}`,
+		`{"content":"Meeting notes for Tuesday","encrypted":true}`,
+		`{"content":"QUJD","encrypted":true}`,
 	} {
 		w := e.post(body)
 		if w.Code != 400 || !strings.Contains(w.Body.String(), `"error"`) {
@@ -519,7 +521,7 @@ func TestEncryptedRejections(t *testing.T) {
 		}
 	}
 	for _, v := range []string{`"yes"`, `1`, `null`, `[]`} {
-		w := e.post(`{"content":"QUJD","encrypted":` + v + `}`)
+		w := e.post(`{"content":` + jsonString(testCT) + `,"encrypted":` + v + `}`)
 		if w.Code != 400 || w.Header().Get("Content-Type") != "application/json" {
 			t.Errorf("encrypted %s: %d %s", v, w.Code, w.Body)
 		}

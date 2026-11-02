@@ -1,4 +1,4 @@
-const { parseHash, getIdFromHash, classifyId, decrypt, decryptBytes, cryptoAvailable, rewriteAttachmentSrc, attachmentUrl, attachmentMime, formatParts, safeFileName, buildObsidianNewUrl, buildDownloadHref, formatExpires } = LappuViewer;
+const { parseHash, getIdFromHash, classifyId, decrypt, decryptBytes, cryptoAvailable, rewriteAttachmentSrc, attachmentUrl, attachmentMime, formatParts, safeFileName, buildObsidianNewUrl, buildDownloadHref, pageTitle, formatExpires } = LappuViewer;
 const LANGUAGE_STORAGE_KEY = "lappu-language";
 
 let md = markdownit({
@@ -62,6 +62,9 @@ let noteFooter = $("#note-footer");
 let download = $("#download-markdown");
 let open = $("#open-in-obsidian");
 
+// the page title of the home page and of encrypted notes
+const genericTitle = window.document.title;
+
 let language = LappuI18n.resolveLanguage(readStoredLanguage(), navigator.language);
 // what #main currently shows when it is a UI message rather than a note, so it can be re-rendered on language change
 let currentMessage = null;
@@ -90,6 +93,10 @@ display();
 function display() {
     let generation = ++displayGeneration;
     showMessage({ key: "loading" });
+    // nothing of the previous note may linger: its text is in the download link and the Obsidian link
+    download.removeAttr("href").removeAttr("download");
+    open.removeAttr("href");
+    window.document.title = genericTitle;
     clearNoteFooter();
     clearAttachments();
     let id = getId();
@@ -177,12 +184,13 @@ function renderNote(t, id, kind, meta, password) {
     $(() => {
         // change title
         let firstHeading = $("h1, h2, h3, h4, h5, h6").first();
+        let heading = "";
         if (firstHeading) {
-            let heading = firstHeading.text().trim();
+            heading = firstHeading.text().trim();
             if (heading.endsWith("#"))
                 heading = heading.substring(0, heading.length - 1).trimEnd();
-            window.document.title = heading;
         }
+        window.document.title = pageTitle(heading, encrypted, genericTitle);
 
         // scroll to anchor (looked up by id rather than as a jQuery selector, so the hash is never parsed as a selector)
         let element = findHashTarget();
@@ -190,9 +198,10 @@ function renderNote(t, id, kind, meta, password) {
             $(window).scrollTop($(element).offset().top);
 
         // set download links
-        download.attr("download", `${safeFileName(window.document.title)}.md`);
+        let noteName = heading || window.document.title;
+        download.attr("download", `${safeFileName(noteName)}.md`);
         download.attr("href", buildDownloadHref(t));
-        open.attr("href", buildObsidianNewUrl(window.document.title, t));
+        open.attr("href", buildObsidianNewUrl(noteName, t));
 
         // load note footer with publication time (only for shared notes)
         if (kind === "valid")

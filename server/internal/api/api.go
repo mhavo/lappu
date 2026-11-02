@@ -332,21 +332,34 @@ func (s *server) putAttachment(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	limit := s.Store.MaxAttachmentBytes()
-	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
-	if _, tooLarge := errors.AsType[*http.MaxBytesError](err); tooLarge {
-		text(w, http.StatusRequestEntityTooLarge, "Attachment too large")
-		return
-	}
-	if err != nil {
+	// The store streams the body to a temp file; the reader enforces the limit
+	// and the store checks hash and content before storing.
+	body := http.MaxBytesReader(w, r.Body, s.Store.MaxAttachmentBytes())
+	if err := s.Store.PutAttachmentFrom(id, password, name, body); err != nil {
+		if _, tooLarge := errors.AsType[*http.MaxBytesError](err); tooLarge {
+			text(w, http.StatusRequestEntityTooLarge, "Attachment too large")
+			return
+		}
+		if isStore(err) {
+			fail(err)
+			return
+		}
 		text(w, http.StatusBadRequest, "Bad body")
 		return
 	}
-	if err := s.Store.PutAttachment(id, password, name, data); err != nil {
-		fail(err)
-		return
-	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// isStore reports whether err is one the store reports itself, rather than a
+// failure reading the request body or the file system.
+func isStore(err error) bool {
+	for _, e := range []error{store.ErrInvalidID, store.ErrNotFound, store.ErrUnauthorized, store.ErrNotDeclared,
+		store.ErrHashMismatch, store.ErrTooLarge, store.ErrInvalidAttachmentData} {
+		if errors.Is(err, e) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *server) attachmentError(w http.ResponseWriter, err error) {
@@ -355,6 +368,8 @@ func (s *server) attachmentError(w http.ResponseWriter, err error) {
 		text(w, http.StatusBadRequest, "Attachment not declared")
 	case errors.Is(err, store.ErrHashMismatch):
 		text(w, http.StatusBadRequest, "Hash mismatch")
+	case errors.Is(err, store.ErrInvalidAttachmentData):
+		text(w, http.StatusBadRequest, "Invalid attachment")
 	case errors.Is(err, store.ErrTooLarge):
 		text(w, http.StatusRequestEntityTooLarge, "Attachment too large")
 	default:
@@ -369,6 +384,11 @@ func splitAttachment(v string) (id, name string, ok bool) {
 }
 
 func (s *server) getAttachment(w http.ResponseWriter, r *http.Request, v string) {
+	h := w.Header()
+	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	h.Set("Cross-Origin-Resource-Policy", "same-origin")
+	// Revalidate on every use so that deleting or expiring a share takes effect at once.
+	h.Set("Cache-Control", "no-cache")
 	id, name, ok := splitAttachment(v)
 	if !ok {
 		text(w, http.StatusNotFound, "Not found")
@@ -380,14 +400,13 @@ func (s *server) getAttachment(w http.ResponseWriter, r *http.Request, v string)
 		return
 	}
 	defer f.Close()
-	h := w.Header()
 	if encrypted {
 		h.Set("Content-Type", "application/octet-stream")
+		h.Set("Content-Disposition", `attachment; filename="attachment.bin"`)
 	} else {
 		h.Set("Content-Type", store.AttachmentContentType(name))
 	}
-	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
-	h.Set("Cache-Control", "private, max-age=86400")
+	h.Set("ETag", `"`+name[:64]+`"`) // content addressed
 	http.ServeContent(w, r, "", time.Time{}, f)
 }
 

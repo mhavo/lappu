@@ -288,3 +288,9 @@ test("attachment translations exist in every language", () => {
         assert.notEqual(i18n.translate(lang, "imageFailed"), "imageFailed");
     }
 });
+
+test("pageTitle never uses the decrypted heading of an encrypted note", () => {
+    assert.equal(lib.pageTitle("Secret plan", true, "Lappu"), "Lappu");
+    assert.equal(lib.pageTitle("Plan", false, "Lappu"), "Plan");
+    assert.equal(lib.pageTitle("", false, "Lappu"), "Lappu");
+});

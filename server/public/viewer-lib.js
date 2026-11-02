@@ -97,6 +97,12 @@
         return `obsidian://new?name=${encodeURIComponent(safeFileName(title))}&content=${encodeURIComponent(content)}`;
     }
 
+    // The page title for a note: the generic one for an encrypted note, so the
+    // decrypted heading never reaches the title (history, bookmarks, tab lists).
+    function pageTitle(heading, encrypted, genericTitle) {
+        return encrypted || !heading ? genericTitle : heading;
+    }
+
     function buildDownloadHref(content) {
         return `data:text/plain;charset=utf-8,${encodeURIComponent(content)}`;
     }
@@ -260,7 +266,7 @@
 
     const api = {
         ID_PATTERN, parseHash, getIdFromHash, classifyId, escapeHtml, formatParts,
-        safeFileName, buildObsidianNewUrl, buildDownloadHref, formatExpires,
+        safeFileName, buildObsidianNewUrl, buildDownloadHref, pageTitle, formatExpires,
         CrypterError, decodeMessage, deriveKey, decrypt, decryptBytes, cryptoAvailable,
         ATTACHMENT_PATTERN, ATTACHMENT_PLACEHOLDER, isAttachmentName, attachmentMime, attachmentUrl, rewriteAttachmentSrc
     };

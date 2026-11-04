@@ -277,6 +277,47 @@ func TestStaticFiles(t *testing.T) {
 	}
 }
 
+// Viewer files are revalidated on every use, so a browser never keeps running an old viewer.
+func TestStaticFilesRevalidate(t *testing.T) {
+	e := newEnv(t)
+	for _, target := range []string{"/", "/style.css", "/style.css?v=old", "/sub/a.js"} {
+		w := e.do(req{method: "GET", target: target})
+		etag := w.Header().Get("ETag")
+		if w.Code != 200 || w.Header().Get("Cache-Control") != "no-cache" || len(etag) != 18 {
+			t.Errorf("%s: %d %v", target, w.Code, w.Header())
+			continue
+		}
+		if w := e.do(req{method: "GET", target: target, header: map[string]string{"If-None-Match": etag}}); w.Code != http.StatusNotModified {
+			t.Errorf("%s revalidation: %d", target, w.Code)
+		}
+	}
+	if a, b := e.do(req{method: "GET", target: "/style.css"}).Header().Get("ETag"),
+		e.do(req{method: "GET", target: "/sub/a.js"}).Header().Get("ETag"); a == b {
+		t.Errorf("same ETag %s for different files", a)
+	}
+}
+
+// index.html references the viewer's own files with their content version, so a
+// new page never loads a stale cached script.
+func TestIndexVersionsOwnFiles(t *testing.T) {
+	page := `<link href="/style.css"><script src="/sub/a.js"></script><script src="/missing.js"></script>` +
+		`<script src="https://cdn.example/x.js"></script><link href="/style.css?v=1"><body>viewer</body>`
+	e := newEnv(t, func(c *Config) {
+		c.Static = fstest.MapFS{
+			"index.html": {Data: []byte(page)},
+			"style.css":  {Data: []byte("body{}")},
+			"sub/a.js":   {Data: []byte("x")},
+		}
+	})
+	want := `<link href="/style.css?v=` + contentVersion([]byte("body{}")) + `">` +
+		`<script src="/sub/a.js?v=` + contentVersion([]byte("x")) + `"></script><script src="/missing.js"></script>` +
+		`<script src="https://cdn.example/x.js"></script><link href="/style.css?v=1"><body>viewer</body>`
+	expect(t, e.do(req{method: "GET", target: "/"}), 200, want)
+	if body := e.do(req{method: "GET", target: "/s/abcdef12"}).Body.String(); body != want {
+		t.Errorf("share page:\n%s", body)
+	}
+}
+
 func TestHideFooter(t *testing.T) {
 	page := fstest.MapFS{"index.html": {Data: []byte("<html><body><div id=\"footer\"></div></body></html>")}}
 	withPage := func(c *Config) { c.Static = page }

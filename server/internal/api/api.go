@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,8 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"path"
+	"regexp"
 	"strings"
 	"time"
 
@@ -114,12 +117,9 @@ func New(cfg Config) http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		text(w, http.StatusOK, "ok")
 	})
-	page, rewritten := viewerIndex(cfg.Static, cfg.HideFooter, cfg.SourceURL)
-	var index []byte
-	if rewritten {
-		index = page
-	}
-	mux.Handle("/", static(cfg.Static, index))
+	versions := fileVersions(cfg.Static)
+	page := viewerIndex(cfg.Static, versions, cfg.HideFooter, cfg.SourceURL)
+	mux.Handle("/", static(cfg.Static, page, versions))
 	mux.Handle("/s/", s.limitReads(s.sharePage(page)))
 	return s.logRequests(securityHeaders(mux))
 }
@@ -144,18 +144,27 @@ func securityHeaders(next http.Handler) http.Handler {
 // bodyMarker is replaced in index.html to pass the viewer settings.
 const bodyMarker = "<body>"
 
-// viewerIndex reads index.html and, with hideFooter or a sourceURL, gives its
-// <body> the no-footer class and/or a data-source-url attribute (rewritten
-// reports whether it did). It panics if index.html cannot be read or, when it
-// has to be rewritten, does not contain exactly one <body>, so a changed
-// viewer never silently ignores the settings.
-func viewerIndex(fsys fs.FS, hideFooter bool, sourceURL string) (page []byte, rewritten bool) {
+// viewerIndex reads index.html, adds "?v=<version>" to its references to
+// the viewer's own files (so a browser never runs a stale cached copy of a
+// script with a newer page) and, with hideFooter or a sourceURL, gives its
+// <body> the no-footer class and/or a data-source-url attribute. It panics if
+// index.html cannot be read or, when the settings have to be applied, does
+// not contain exactly one <body>, so a changed viewer never silently ignores
+// the settings.
+func viewerIndex(fsys fs.FS, versions map[string]string, hideFooter bool, sourceURL string) []byte {
 	b, err := fs.ReadFile(fsys, "index.html")
 	if err != nil {
 		panic("viewer: " + err.Error())
 	}
+	b = localReference.ReplaceAllFunc(b, func(m []byte) []byte {
+		sub := localReference.FindSubmatch(m)
+		if v, ok := versions[string(sub[2])]; ok {
+			return append(bytes.Clone(m[:len(m)-1]), `?v=`+v+`"`...)
+		}
+		return m
+	})
 	if !hideFooter && sourceURL == "" {
-		return b, false
+		return b
 	}
 	if n := bytes.Count(b, []byte(bodyMarker)); n != 1 {
 		panic(fmt.Sprintf("viewer settings: index.html has %d %s tags, want exactly 1", n, bodyMarker))
@@ -167,14 +176,56 @@ func viewerIndex(fsys fs.FS, hideFooter bool, sourceURL string) (page []byte, re
 	if sourceURL != "" {
 		body += ` data-source-url="` + html.EscapeString(sourceURL) + `"`
 	}
-	return bytes.Replace(b, []byte(bodyMarker), []byte(body+">"), 1), true
+	return bytes.Replace(b, []byte(bodyMarker), []byte(body+">"), 1)
 }
 
-// static serves the viewer files. A non-nil index (index.html with the viewer
-// settings) is served for "/"; "/index.html" is still redirected to "/" by the
-// file server, so both paths get the same page.
-func static(fsys fs.FS, index []byte) http.Handler {
+// localReference matches a src or href attribute with an absolute path and
+// no query or fragment; the second group is the path.
+var localReference = regexp.MustCompile(`((?:src|href)=")(/[^"?#]*)"`)
+
+// fileVersions returns a short content hash of every viewer file, keyed by
+// its URL path ("/index.js"). It panics if the files cannot be read.
+func fileVersions(fsys fs.FS) map[string]string {
+	versions := map[string]string{}
+	err := fs.WalkDir(fsys, ".", func(name string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, err := fs.ReadFile(fsys, name)
+		if err != nil {
+			return err
+		}
+		versions["/"+name] = contentVersion(b)
+		return nil
+	})
+	if err != nil {
+		panic("viewer: " + err.Error())
+	}
+	return versions
+}
+
+func contentVersion(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:8])
+}
+
+// revalidate makes the browser check a viewer file with the server on every
+// use (a 304 when it has not changed) instead of trusting a cached copy:
+// the embedded files have no modification time, so without an ETag a
+// browser could keep running an old viewer indefinitely.
+func revalidate(w http.ResponseWriter, version string) {
+	h := w.Header()
+	h.Set("Cache-Control", "no-cache")
+	h.Set("ETag", `"`+version+`"`)
+}
+
+// static serves the viewer files, all with revalidate. index (index.html with
+// the versioned references and the viewer settings) is served for "/";
+// "/index.html" is still redirected to "/" by the file server, so both paths
+// get the same page.
+func static(fsys fs.FS, index []byte, versions map[string]string) http.Handler {
 	files := http.FileServerFS(fsys)
+	indexVersion := contentVersion(index)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
@@ -186,9 +237,13 @@ func static(fsys fs.FS, index []byte) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		if index != nil && r.URL.Path == "/" {
+		if r.URL.Path == "/" {
+			revalidate(w, indexVersion)
 			http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(index))
 			return
+		}
+		if v, ok := versions[path.Clean(r.URL.Path)]; ok && r.URL.Path != "/index.html" {
+			revalidate(w, v)
 		}
 		files.ServeHTTP(w, r)
 	})
